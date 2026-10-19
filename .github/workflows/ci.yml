@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: conflict
+          POSTGRES_PASSWORD: conflict
+          POSTGRES_DB: conflict_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U conflict"
+          --health-interval 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: pytest -q
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://conflict:conflict@localhost:5432/conflict_test
