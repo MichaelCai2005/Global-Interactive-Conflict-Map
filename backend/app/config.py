@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # are treated as reports of the same incident.
     link_radius_km: float = 25.0
     link_day_window: int = 1
+    # ACLED account login, used by `ingest download acled` to get an API token.
+    acled_email: str | None = None
+    acled_password: str | None = None
 
 
 @lru_cache

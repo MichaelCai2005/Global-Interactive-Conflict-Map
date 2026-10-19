@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.ingest.loader import PARSERS, ingest_file
+from app.ingest.loader import SOURCES, ingest_file
 from app.models import IngestRun, RejectedRecord
 from app.schemas import IngestRunOut, RejectedRecordOut
 
@@ -18,9 +18,9 @@ Db = Annotated[Session, Depends(get_db)]
 
 @router.post("/ingest/{source}", response_model=IngestRunOut, status_code=201)
 def upload(source: str, file: UploadFile, db: Db):
-    """Loads an uploaded CSV or .zip from a supported source. Large files belong in the CLI."""
-    if source not in PARSERS:
-        raise HTTPException(404, f"unknown source, expected one of {sorted(PARSERS)}")
+    """Loads an uploaded CSV or .zip from an event or indicator source. Large files belong in the CLI."""
+    if source not in SOURCES:
+        raise HTTPException(404, f"unknown source, expected one of {SOURCES}")
     filename = Path(file.filename or "upload.csv").name
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / filename

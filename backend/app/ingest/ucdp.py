@@ -9,6 +9,7 @@ import csv
 from collections.abc import Iterator
 from typing import TextIO
 
+from app import countries
 from app.ingest.common import (
     FieldErrors,
     NormalizedEvent,
@@ -89,6 +90,8 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
         longitude=lon,
         geo_precision=WHERE_PRECISION.get(where_prec, "exact"),
         country=normalize_country(raw.get("country")),
+        # country_id is the Gleditsch-Ward code of the country the event happened in.
+        country_iso3=countries.from_gw(raw.get("country_id")),
         admin1=clean_text(raw.get("adm_1")),
         location_name=clean_text(raw.get("where_coordinates")),
         actor1=clean_text(raw.get("side_a")),

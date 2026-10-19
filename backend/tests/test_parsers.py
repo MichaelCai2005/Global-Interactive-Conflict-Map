@@ -1,13 +1,17 @@
 import io
 from datetime import date
 
-from app.ingest import gdelt, ucdp
+from app.ingest import acled, gdelt, ucdp
 from app.ingest.loader import collapse_duplicates
-from tests.builders import gdelt_row, gdelt_tsv, ucdp_csv, ucdp_row
+from tests.builders import acled_csv, acled_row, gdelt_row, gdelt_tsv, ucdp_csv, ucdp_row
 
 
 def parse_ucdp(*rows):
     return list(ucdp.parse(io.StringIO(ucdp_csv(list(rows)))))
+
+
+def parse_acled(*rows):
+    return list(acled.parse(io.StringIO(acled_csv(list(rows)))))
 
 
 def parse_gdelt(*rows):
@@ -108,3 +112,65 @@ def test_gdelt_rows_about_the_same_incident_collapse():
     assert merged == 1
     assert [e.source_event_id for e in kept] == ["1", "3"]
     assert kept[0].report_count == 9
+
+
+def test_acled_valid_row_is_normalized():
+    [row] = parse_acled(acled_row())
+    event = row.event
+    assert row.reasons == []
+    assert event.source_event_id == event.dedupe_key == "TST100"
+    assert event.event_date == date(2022, 3, 1)
+    assert event.event_type == "battle"
+    assert event.is_violent
+    assert event.geo_precision == "exact"
+    assert event.fatalities_best == 4
+    assert event.fatalities_low is None and event.fatalities_high is None
+    assert event.report_count == 2  # two outlets in `source`
+    assert event.attributes["sub_event_type"] == "Armed clash"
+    assert event.attributes["notes"].startswith("On 1 March 2022")
+
+
+def test_acled_protests_riots_and_strategic_developments_are_signals():
+    rows = parse_acled(
+        acled_row(event_type="Protests", sub_event_type="Peaceful protest", fatalities="0"),
+        acled_row(event_type="Riots", sub_event_type="Mob violence", fatalities="1"),
+        acled_row(event_type="Strategic developments", sub_event_type="Arrests"),
+        acled_row(event_type="Violence against civilians", sub_event_type="Attack"),
+    )
+    assert [r.event.event_type for r in rows] == [
+        "protest",
+        "riot",
+        "strategic_development",
+        "violence_against_civilians",
+    ]
+    assert [r.event.is_violent for r in rows] == [False, False, False, True]
+
+
+def test_acled_export_tool_dates_and_regional_precision():
+    [row] = parse_acled(acled_row(event_date="01 March 2022", geo_precision="3"))
+    assert row.event.event_date == date(2022, 3, 1)
+    assert row.event.geo_precision == "admin"
+
+
+def test_acled_rejects_bad_rows():
+    rows = parse_acled(
+        acled_row(event_type="Parades"),
+        acled_row(geo_precision="5", fatalities="-2"),
+        acled_row(latitude="", event_date="sometime"),
+    )
+    assert all(r.event is None for r in rows)
+    assert "unknown event_type: 'Parades'" in rows[0].reasons
+    assert "unknown geo_precision: 5" in rows[1].reasons
+    assert "missing latitude" in rows[2].reasons
+    assert "invalid event_date: 'sometime'" in rows[2].reasons
+    [negative] = parse_acled(acled_row(fatalities="-2"))
+    assert "negative fatality count" in negative.reasons
+
+
+def test_acled_file_without_required_columns_is_refused():
+    try:
+        list(acled.parse(io.StringIO("event_id_cnty,country\nX1,Testland\n")))
+    except ValueError as exc:
+        assert "missing columns" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

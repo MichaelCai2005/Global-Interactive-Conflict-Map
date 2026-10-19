@@ -1,0 +1,253 @@
+/* Risk panel. Component colors live in src/api/risk.ts (RISK_COMPONENTS). */
+
+.risk-note {
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--serious);
+  background: var(--surface-2);
+  border-radius: 4px;
+  color: var(--ink-2);
+}
+
+.risk-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.risk-legend {
+  margin: 4px 0 8px;
+}
+
+.risk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.risk-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 112px 1fr 28px 44px;
+  gap: 8px;
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 4px;
+  text-align: left;
+}
+
+.risk-row:hover {
+  background: var(--surface-2);
+}
+
+.risk-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.risk-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.risk-tag {
+  font-size: 10px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.risk-tag-new,
+.risk-tag-intensifying,
+.risk-tag-alarm {
+  color: var(--serious);
+}
+
+.risk-tag-diminishing {
+  color: var(--good);
+}
+
+.risk-track {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  background: var(--surface-2);
+  border-radius: 2px;
+}
+
+.risk-seg {
+  height: 100%;
+}
+
+.risk-seg:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.risk-score {
+  text-align: right;
+  font-weight: 600;
+}
+
+.risk-change {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.risk-more {
+  margin-top: 6px;
+  width: 100%;
+}
+
+.risk-method {
+  margin-top: 14px;
+}
+
+.risk-country-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.risk-title {
+  font-size: 18px;
+  margin: 12px 0 2px;
+}
+
+.risk-chart {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 4px;
+  margin-top: 6px;
+}
+
+.risk-y {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  height: 120px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.risk-plot {
+  position: relative;
+  cursor: crosshair;
+}
+
+.risk-plot svg {
+  display: block;
+}
+
+.risk-x {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.risk-marker-current {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.risk-marker-picked {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.risk-marker-hover {
+  stroke: var(--ink-2);
+  stroke-width: 1;
+  stroke-opacity: 0.6;
+}
+
+.risk-tooltip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(8px);
+  min-width: 150px;
+  padding: 6px 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.risk-tooltip.is-left {
+  transform: translateX(calc(-100% - 8px));
+}
+
+.risk-tooltip-score {
+  margin: 2px 0 4px;
+}
+
+.risk-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.risk-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.risk-big {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.risk-summary {
+  margin: 6px 0 10px;
+  color: var(--ink-2);
+}
+
+.risk-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.risk-table th,
+.risk-table td {
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+  font-weight: normal;
+}
+
+.risk-table thead th {
+  border-top: none;
+  color: var(--ink-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.risk-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.risk-table tbody th {
+  font-weight: 600;
+}
+
+.risk-why {
+  font-weight: normal;
+  margin-top: 2px;
+}

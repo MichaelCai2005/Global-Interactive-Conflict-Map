@@ -2,7 +2,7 @@ from sqlalchemy import select
 
 from app.ingest.loader import ingest_file
 from app.models import Event, EventLink, RejectedRecord
-from tests.builders import gdelt_row, gdelt_tsv, ucdp_csv, ucdp_row
+from tests.builders import acled_csv, acled_row, gdelt_row, gdelt_tsv, ucdp_csv, ucdp_row
 
 
 def write(tmp_path, name, content):
@@ -112,3 +112,38 @@ def test_unreadable_file_marks_the_run_failed(session, tmp_path):
     assert run.status == "failed"
     assert "missing columns" in run.error
     assert session.scalar(select(Event)) is None
+
+
+def test_acled_links_under_ucdp_and_above_gdelt(session, tmp_path):
+    ingest_file(session, "ucdp", write(tmp_path, "ged.csv", ucdp_csv([ucdp_row()])))
+    acled_run = ingest_file(
+        session,
+        "acled",
+        write(
+            tmp_path,
+            "acled.csv",
+            acled_csv(
+                [
+                    acled_row(),  # same clash UCDP recorded
+                    acled_row(event_id_cnty="TST200", latitude="10.0", longitude="10.0"),
+                    acled_row(event_id_cnty="TST300", event_type="Protests", fatalities="0"),
+                ]
+            ),
+        ),
+    )
+    gdelt_run = ingest_file(
+        session,
+        "gdelt",
+        write(
+            tmp_path, "g.CSV", gdelt_tsv([gdelt_row(ActionGeo_Lat="10.01", ActionGeo_Long="10.0")])
+        ),
+    )
+    events = {e.source_event_id: e for e in session.scalars(select(Event))}
+
+    assert acled_run.status == "succeeded", acled_run.error
+    assert (acled_run.inserted, acled_run.cross_source_links) == (3, 1)
+    assert events["TST100"].duplicate_of_id == events["900001"].id
+    assert events["TST300"].duplicate_of_id is None  # protests are signals, never linked
+    # With no UCDP event nearby, the GDELT report attaches to the ACLED one.
+    assert gdelt_run.cross_source_links == 1
+    assert events["1000000001"].duplicate_of_id == events["TST200"].id

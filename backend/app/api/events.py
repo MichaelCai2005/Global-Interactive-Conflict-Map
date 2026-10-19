@@ -8,13 +8,21 @@ from sqlalchemy.orm import Session, aliased
 
 from app.db import get_db
 from app.models import Event, EventLink
-from app.schemas import EventDetail, EventOut, EventPage, LinkedEvent, Timeline, TimelineBucket
+from app.schemas import (
+    EventDetail,
+    EventOut,
+    EventPage,
+    LinkedEvent,
+    Timeline,
+    TimelineBucket,
+    parse_bbox,
+)
 
 router = APIRouter(tags=["events"])
 
 
 class EventFilters(BaseModel):
-    source: str | None = None
+    source: list[str] | None = None
     country: str | None = Field(None, description="Exact country name, case-insensitive")
     event_type: list[str] | None = None
     violent: bool | None = Field(None, description="true for violence, false for signals")
@@ -35,19 +43,11 @@ class EventFilters(BaseModel):
         return self
 
     def bounds(self) -> tuple[float, float, float, float] | None:
-        if self.bbox is None:
-            return None
-        try:
-            min_lon, min_lat, max_lon, max_lat = (float(v) for v in self.bbox.split(","))
-        except ValueError:
-            raise ValueError("bbox must be four numbers: min_lon,min_lat,max_lon,max_lat") from None
-        if min_lon > max_lon or min_lat > max_lat:
-            raise ValueError("bbox minimums must not exceed maximums")
-        return min_lon, min_lat, max_lon, max_lat
+        return None if self.bbox is None else parse_bbox(self.bbox)
 
     def apply(self, query: Select) -> Select:
         if self.source:
-            query = query.where(Event.source == self.source)
+            query = query.where(Event.source.in_(self.source))
         if self.country:
             query = query.where(func.lower(Event.country) == self.country.lower())
         if self.event_type:
@@ -75,6 +75,7 @@ class EventFilters(BaseModel):
 class EventQuery(EventFilters):
     limit: int = Field(100, ge=1, le=1000)
     offset: int = Field(0, ge=0)
+    sort: Literal["date", "fatalities"] = Field("date", description="Newest or deadliest first")
 
 
 class TimelineQuery(EventFilters):
@@ -88,9 +89,10 @@ Db = Annotated[Session, Depends(get_db)]
 def list_events(params: Annotated[EventQuery, Query()], db: Db):
     query = params.apply(select(Event))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
-    rows = db.scalars(
-        query.order_by(Event.event_date.desc(), Event.id).limit(params.limit).offset(params.offset)
-    )
+    order = [Event.event_date.desc(), Event.id]
+    if params.sort == "fatalities":
+        order.insert(0, Event.fatalities_best.desc().nulls_last())
+    rows = db.scalars(query.order_by(*order).limit(params.limit).offset(params.offset))
     return EventPage(total=total, limit=params.limit, offset=params.offset, items=list(rows))
 
 
