@@ -22,6 +22,8 @@ class NormalizedEvent:
     geo_precision: str
     end_date: date | None = None
     country: str | None = None
+    # ISO 3166 alpha-3, mapped from the source's own country code (see app.countries).
+    country_iso3: str | None = None
     admin1: str | None = None
     location_name: str | None = None
     actor1: str | None = None
@@ -43,6 +45,30 @@ class ParsedRow:
     event: NormalizedEvent | None = None
     reasons: list[str] = field(default_factory=list)
     # True when the row is valid but out of scope (e.g. GDELT cooperation events).
+    filtered_out: bool = False
+
+
+@dataclass
+class IndicatorValue:
+    """One country-year value of a structural indicator."""
+
+    indicator: str
+    iso3: str
+    year: int
+    value: float
+
+
+@dataclass
+class ParsedIndicatorRow:
+    """The indicator counterpart of ParsedRow. One source row can carry several values
+    (a V-Dem row holds every index for a country-year) or none (an EPR group's share is
+    added into its country's totals, which travel on the country's first row)."""
+
+    row_number: int
+    raw: dict[str, str]
+    values: list[IndicatorValue] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+    # True when the row is valid but out of scope (regional aggregates, historical states).
     filtered_out: bool = False
 
 

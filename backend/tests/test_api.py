@@ -78,7 +78,7 @@ def test_upload_and_inspect_rejected_rows(client):
 
 def test_upload_errors(client):
     assert (
-        client.post("/ingest/acled", files={"file": ("a.csv", "x", "text/csv")}).status_code == 404
+        client.post("/ingest/acme", files={"file": ("a.csv", "x", "text/csv")}).status_code == 404
     )
     bad = client.post("/ingest/gdelt", files={"file": ("a.zip", b"not a zip", "application/zip")})
     assert bad.status_code == 422

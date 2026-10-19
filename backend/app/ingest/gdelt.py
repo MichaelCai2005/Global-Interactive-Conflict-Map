@@ -17,6 +17,7 @@ import sys
 from collections.abc import Iterator
 from typing import TextIO
 
+from app import countries
 from app.ingest.common import (
     FieldErrors,
     NormalizedEvent,
@@ -155,6 +156,7 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
         geo_precision=GEO_TYPE_PRECISION[geo_type],
         # FullName reads "City, Region, Country"; the last part is the country name.
         country=normalize_country(place.rsplit(",", 1)[-1]) if place else None,
+        country_iso3=countries.from_fips(raw.get("ActionGeo_CountryCode")),
         admin1=clean_text(raw.get("ActionGeo_ADM1Code")),
         location_name=place,
         actor1=clean_text(raw.get("Actor1Name")),

@@ -14,20 +14,34 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.ingest import gdelt, ucdp
-from app.ingest.common import NormalizedEvent, ParsedRow
-from app.models import Event, IngestRun, RejectedRecord
+from app.ingest import acled, epr, gdelt, ucdp, vdem, wdi
+from app.ingest.common import IndicatorValue, NormalizedEvent, ParsedIndicatorRow, ParsedRow
+from app.models import CountryIndicator, Event, IngestRun, RejectedRecord
 
 log = logging.getLogger(__name__)
 
 PARSERS: dict[str, Callable[[TextIO], Iterator[ParsedRow]]] = {
     ucdp.SOURCE: ucdp.parse,
+    acled.SOURCE: acled.parse,
     gdelt.SOURCE: gdelt.parse,
 }
+# Country-year structural indicators, stored in country_indicators rather than events.
+INDICATOR_PARSERS: dict[str, Callable[[TextIO], Iterator[ParsedIndicatorRow]]] = {
+    wdi.SOURCE: wdi.parse,
+    vdem.SOURCE: vdem.parse,
+    epr.SOURCE: epr.parse,
+}
+INDICATOR_NAMES = {
+    wdi.SOURCE: wdi.INDICATORS,
+    vdem.SOURCE: vdem.INDICATORS,
+    epr.SOURCE: epr.INDICATORS,
+}
+SOURCES = sorted(PARSERS | INDICATOR_PARSERS)
 
 # When two sources describe the same incident, the lower number is kept as the canonical
-# record and the other is marked as its duplicate. Hand-coded datasets beat machine-coded news.
-SOURCE_PRIORITY = {ucdp.SOURCE: 1, gdelt.SOURCE: 3}
+# record and the other is marked as its duplicate. Hand-coded datasets beat machine-coded news;
+# UCDP beats ACLED because its fatality counts carry low/high bounds and conflict ids.
+SOURCE_PRIORITY = {ucdp.SOURCE: 1, acled.SOURCE: 2, gdelt.SOURCE: 3}
 
 BATCH_SIZE = 1000
 
@@ -63,43 +77,18 @@ def collapse_duplicates(events: list[NormalizedEvent]) -> tuple[list[NormalizedE
 def ingest_file(
     session: Session, source: str, path: Path, filename: str | None = None
 ) -> IngestRun:
-    if source not in PARSERS:
-        raise ValueError(f"unknown source {source!r}, expected one of {sorted(PARSERS)}")
+    if source not in SOURCES:
+        raise ValueError(f"unknown source {source!r}, expected one of {SOURCES}")
 
     run = IngestRun(source=source, filename=filename or path.name)
     session.add(run)
     session.commit()
 
     try:
-        events: list[NormalizedEvent] = []
-        rejected: list[dict] = []
-        with open_source_file(path) as stream:
-            for row in PARSERS[source](stream):
-                run.rows_read += 1
-                if row.filtered_out:
-                    run.filtered_out += 1
-                elif row.event is None:
-                    rejected.append(
-                        {
-                            "ingest_run_id": run.id,
-                            "source": source,
-                            "row_number": row.row_number,
-                            "reasons": row.reasons,
-                            "raw": row.raw,
-                        }
-                    )
-                else:
-                    events.append(row.event)
-
-        events, run.merged_in_file = collapse_duplicates(events)
-        run.rejected = len(rejected)
-        for start in range(0, len(rejected), BATCH_SIZE):
-            session.execute(pg_insert(RejectedRecord), rejected[start : start + BATCH_SIZE])
-        for start in range(0, len(events), BATCH_SIZE):
-            inserted = _upsert(session, run.id, events[start : start + BATCH_SIZE])
-            run.inserted += inserted
-            run.updated += len(events[start : start + BATCH_SIZE]) - inserted
-        run.cross_source_links = link_cross_source(session, run.id)
+        if source in INDICATOR_PARSERS:
+            _load_indicators(session, run, path)
+        else:
+            _load_events(session, run, path)
         run.status = "succeeded"
     except Exception as exc:
         session.rollback()
@@ -119,17 +108,90 @@ def ingest_file(
     return run
 
 
+def _rejected(run: IngestRun, row: ParsedRow | ParsedIndicatorRow) -> dict:
+    return {
+        "ingest_run_id": run.id,
+        "source": run.source,
+        "row_number": row.row_number,
+        "reasons": row.reasons,
+        "raw": row.raw,
+    }
+
+
+def _save_rejected(session: Session, run: IngestRun, rejected: list[dict]) -> None:
+    run.rejected = len(rejected)
+    for start in range(0, len(rejected), BATCH_SIZE):
+        session.execute(pg_insert(RejectedRecord), rejected[start : start + BATCH_SIZE])
+
+
+def _load_events(session: Session, run: IngestRun, path: Path) -> None:
+    events: list[NormalizedEvent] = []
+    rejected: list[dict] = []
+    with open_source_file(path) as stream:
+        for row in PARSERS[run.source](stream):
+            run.rows_read += 1
+            if row.filtered_out:
+                run.filtered_out += 1
+            elif row.event is None:
+                rejected.append(_rejected(run, row))
+            else:
+                events.append(row.event)
+
+    events, run.merged_in_file = collapse_duplicates(events)
+    _save_rejected(session, run, rejected)
+    for start in range(0, len(events), BATCH_SIZE):
+        inserted = _upsert(session, run.id, events[start : start + BATCH_SIZE])
+        run.inserted += inserted
+        run.updated += len(events[start : start + BATCH_SIZE]) - inserted
+    run.cross_source_links = link_cross_source(session, run.id)
+
+
+def _load_indicators(session: Session, run: IngestRun, path: Path) -> None:
+    """Upserts country-year values; a newer release of a dataset overwrites revised values."""
+    values: dict[tuple[str, str, int], IndicatorValue] = {}
+    rejected: list[dict] = []
+    with open_source_file(path) as stream:
+        for row in INDICATOR_PARSERS[run.source](stream):
+            run.rows_read += 1
+            if row.filtered_out:
+                run.filtered_out += 1
+            elif row.reasons:
+                rejected.append(_rejected(run, row))
+            for value in row.values:
+                key = (value.indicator, value.iso3, value.year)
+                run.merged_in_file += key in values
+                values[key] = value
+
+    _save_rejected(session, run, rejected)
+    rows = [{**asdict(v), "source": run.source, "ingest_run_id": run.id} for v in values.values()]
+    for start in range(0, len(rows), BATCH_SIZE):
+        stmt = pg_insert(CountryIndicator).values(rows[start : start + BATCH_SIZE])
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["source", "indicator", "iso3", "year"],
+            set_={"value": stmt.excluded.value, "ingest_run_id": stmt.excluded.ingest_run_id},
+        ).returning(literal_column("(xmax = 0)"))
+        inserted = sum(1 for (was_inserted,) in session.execute(stmt) if was_inserted)
+        run.inserted += inserted
+        run.updated += len(rows[start : start + BATCH_SIZE]) - inserted
+
+
 def _upsert(session: Session, run_id: int, events: list[NormalizedEvent]) -> int:
     """Inserts new events and refreshes existing ones; returns how many were new."""
     stmt = pg_insert(Event).values([{**asdict(e), "ingest_run_id": run_id} for e in events])
     if events[0].source == gdelt.SOURCE:
         # A GDELT fingerprint seen again (a later file, or a re-run) is the same incident.
-        changes = {"report_count": func.greatest(Event.report_count, stmt.excluded.report_count)}
+        changes = {
+            "report_count": func.greatest(Event.report_count, stmt.excluded.report_count),
+            # Fills the code in on events loaded before countries were mapped.
+            "country_iso3": func.coalesce(stmt.excluded.country_iso3, Event.country_iso3),
+        }
     else:
         # Curated sources revise past events between releases, so the newest file wins.
         skip = {"id", "source", "dedupe_key", "created_at", "duplicate_of_id"}
         changes = {
-            c.name: stmt.excluded[c.name] for c in Event.__table__.columns if c.name not in skip
+            c.name: stmt.excluded[c.name]
+            for c in Event.__table__.columns
+            if c.name not in skip and c.computed is None
         }
     changes |= {"ingest_run_id": stmt.excluded.ingest_run_id, "updated_at": func.now()}
     stmt = stmt.on_conflict_do_update(constraint="uq_events_source_key", set_=changes).returning(
@@ -150,6 +212,10 @@ def link_cross_source(session: Session, run_id: int) -> int:
     LINK_RADIUS_KM of each other, and their dates are within LINK_DAY_WINDOW days (using the
     full date range for multi-day events). The lower-priority event of the closest match is
     marked as a duplicate of the other. Only pairs touching this run are considered.
+
+    The search starts from this run's events and finds partners through
+    ix_events_link_candidates, which indexes location and date range together; the
+    `range(...) && ...` conditions exist so that index can be used.
     """
     settings = get_settings()
     params = {
@@ -158,32 +224,55 @@ def link_cross_source(session: Session, run_id: int) -> int:
         "radius_km": settings.link_radius_km,
         "days": settings.link_day_window,
     }
+    candidate = "is_violent AND {t}.geo_precision <> 'country'"
+    date_range = "daterange({t}.event_date, COALESCE({t}.end_date, {t}.event_date), '[]')"
     inserted = session.execute(
         text(f"""
-            INSERT INTO event_links (event_id, related_event_id, link_type, distance_km, day_gap, score)
-            SELECT dup_id, canon_id, 'possible_duplicate', km, gap,
-                   round((1 - 0.5 * km / :radius_km - 0.5 * gap / (:days + 1.0))::numeric, 3)
-            FROM (
-                SELECT DISTINCT ON (d.id)
-                    d.id AS dup_id,
-                    c.id AS canon_id,
-                    ST_Distance(d.geog, c.geog) / 1000.0 AS km,
-                    GREATEST(c.event_date - d.event_date,
-                             d.event_date - COALESCE(c.end_date, c.event_date), 0) AS gap
-                FROM events d
+            WITH run_events AS (
+                SELECT * FROM events r
+                WHERE r.ingest_run_id = :run_id AND r.{candidate.format(t="r")}
+            ),
+            pairs AS (
+                -- This run's events as duplicates of existing higher-priority events.
+                SELECT d.id AS dup_id, c.id AS canon_id, d.event_date AS d_date,
+                       c.event_date AS c_start, COALESCE(c.end_date, c.event_date) AS c_end,
+                       ST_Distance(d.geog, c.geog) AS meters
+                FROM run_events d
                 JOIN events c
-                  ON c.source <> d.source
-                 AND c.is_violent
-                 AND c.geo_precision <> 'country'
+                  ON c.{candidate.format(t="c")}
+                 AND c.source <> d.source
+                 AND {date_range.format(t="c")}
+                     && daterange(d.event_date - CAST(:days AS integer), d.event_date + CAST(:days AS integer), '[]')
+                 AND ST_DWithin(d.geog, c.geog, :meters)
+                WHERE {_priority_sql("d")} > {_priority_sql("c")}
+                UNION ALL
+                -- Existing lower-priority events as duplicates of this run's events.
+                SELECT d.id, c.id, d.event_date, c.event_date, COALESCE(c.end_date, c.event_date),
+                       ST_Distance(d.geog, c.geog)
+                FROM run_events c
+                JOIN events d
+                  ON d.{candidate.format(t="d")}
+                 AND d.source <> c.source
+                 AND {date_range.format(t="d")} && daterange(
+                     c.event_date - CAST(:days AS integer), COALESCE(c.end_date, c.event_date) + CAST(:days AS integer), '[]')
                  AND d.event_date BETWEEN c.event_date - CAST(:days AS integer)
                                       AND COALESCE(c.end_date, c.event_date) + CAST(:days AS integer)
                  AND ST_DWithin(d.geog, c.geog, :meters)
-                WHERE d.is_violent
-                  AND d.geo_precision <> 'country'
-                  AND {_priority_sql("d")} > {_priority_sql("c")}
-                  AND (d.ingest_run_id = :run_id OR c.ingest_run_id = :run_id)
-                ORDER BY d.id, gap, km
-            ) best
+                WHERE {_priority_sql("d")} > {_priority_sql("c")}
+            ),
+            best AS (
+                SELECT DISTINCT ON (dup_id)
+                    dup_id, canon_id, meters / 1000.0 AS km,
+                    GREATEST(c_start - d_date, d_date - c_end, 0) AS gap
+                FROM pairs
+                -- canon_id breaks ties between events at the same place and date, so a
+                -- reload picks the same partner and adds no links.
+                ORDER BY dup_id, gap, meters, canon_id
+            )
+            INSERT INTO event_links (event_id, related_event_id, link_type, distance_km, day_gap, score)
+            SELECT dup_id, canon_id, 'possible_duplicate', km, gap,
+                   round((1 - 0.5 * km / :radius_km - 0.5 * gap / (:days + 1.0))::numeric, 3)
+            FROM best
             ON CONFLICT (event_id, related_event_id, link_type) DO NOTHING
         """),
         params,

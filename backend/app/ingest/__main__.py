@@ -1,9 +1,17 @@
 """Command line entry point.
 
 python -m app.ingest download gdelt --start 2022-02-01 --end 2022-02-28
-python -m app.ingest download ucdp --version 25.1
-python -m app.ingest load ucdp data/ucdp/ged251-csv.zip
+python -m app.ingest download ucdp --version 26.1
+python -m app.ingest download acled --start-year 2018 --end-year 2024 --country Ukraine
+python -m app.ingest download wdi --start-year 1989 --end-year 2025
+python -m app.ingest download epr
+python -m app.ingest load ucdp data/ucdp/ged261-csv.zip
+python -m app.ingest load acled data/acled/*.csv
 python -m app.ingest load gdelt data/gdelt/*.zip
+python -m app.ingest load wdi data/wdi/wdi-1989-2025.csv
+python -m app.ingest load epr data/epr/EPR-2021.csv
+python -m app.ingest load vdem V-Dem-CY-Core-v16.csv
+python -m app.ingest build-features --start 2022-01 --end 2022-12
 """
 
 import argparse
@@ -12,9 +20,16 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from app.config import get_settings
 from app.db import session_factory
+from app.features import build_cell_months
 from app.ingest import download
-from app.ingest.loader import PARSERS, ingest_file
+from app.ingest.loader import SOURCES, ingest_file
+
+
+def _month(value: str) -> date:
+    """Accepts 2022-03 or any date in the month."""
+    return date.fromisoformat(value + "-01" if len(value) == 7 else value).replace(day=1)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -22,22 +37,59 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     load = commands.add_parser("load", help="load source files into the database")
-    load.add_argument("source", choices=sorted(PARSERS))
+    load.add_argument("source", choices=SOURCES)
     load.add_argument("paths", nargs="+", type=Path)
 
     fetch = commands.add_parser("download", help="download raw source files")
-    fetch.add_argument("source", choices=["gdelt", "ucdp"])
+    fetch.add_argument("source", choices=["acled", "epr", "gdelt", "ucdp", "wdi"])
     fetch.add_argument("--start", type=date.fromisoformat, help="GDELT: first day")
     fetch.add_argument("--end", type=date.fromisoformat, help="GDELT: last day")
-    fetch.add_argument("--version", default="25.1", help="UCDP GED release, e.g. 25.1")
+    fetch.add_argument("--version", default="26.1", help="UCDP GED release, e.g. 26.1")
+    fetch.add_argument("--start-year", type=int, help="ACLED, WDI: first year")
+    fetch.add_argument("--end-year", type=int, help="ACLED, WDI: last year (default: start year)")
+    fetch.add_argument("--epr-version", default="2021", help="EPR Core release year")
+    fetch.add_argument(
+        "--country", action="append", default=[], help="ACLED: country name, repeatable"
+    )
     fetch.add_argument("--out", type=Path, default=Path("data"))
+
+    build = commands.add_parser(
+        "build-features", help="rebuild cell-month features from the loaded events"
+    )
+    build.add_argument("--start", type=_month, required=True, help="first month, YYYY-MM")
+    build.add_argument("--end", type=_month, help="last month, YYYY-MM (default: start)")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+    if args.command == "build-features":
+        with session_factory()() as session:
+            build_cell_months(session, args.start, args.end or args.start)
+        return 0
+
     if args.command == "download":
         if args.source == "ucdp":
             download.ucdp_ged(args.version, args.out)
+        elif args.source == "epr":
+            download.epr_core(args.epr_version, args.out)
+        elif args.source == "wdi":
+            if not args.start_year:
+                parser.error("WDI downloads need --start-year")
+            download.wdi_indicators(args.start_year, args.end_year or args.start_year, args.out)
+        elif args.source == "acled":
+            settings = get_settings()
+            if not (settings.acled_email and settings.acled_password):
+                parser.error("ACLED downloads need ACLED_EMAIL and ACLED_PASSWORD in .env")
+            if not args.start_year:
+                parser.error("ACLED downloads need --start-year")
+            download.acled_events(
+                settings.acled_email,
+                settings.acled_password,
+                args.start_year,
+                args.end_year or args.start_year,
+                args.country,
+                args.out,
+            )
         else:
             if not args.start:
                 parser.error("GDELT downloads need --start")

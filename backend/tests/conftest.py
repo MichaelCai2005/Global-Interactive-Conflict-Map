@@ -23,7 +23,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "DROP TABLE IF EXISTS rejected_records, event_links, events, ingest_runs, alembic_version CASCADE"
+                "DROP TABLE IF EXISTS risk_scores, risk_countries, cell_month_features, country_indicators, analyst_tasks, watch_items, rejected_records, event_links, events, ingest_runs, alembic_version CASCADE"
             )
         )
     config = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
@@ -41,7 +41,7 @@ def session(engine):
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE rejected_records, event_links, events, ingest_runs RESTART IDENTITY CASCADE"
+                "TRUNCATE risk_scores, risk_countries, cell_month_features, country_indicators, analyst_tasks, watch_items, rejected_records, event_links, events, ingest_runs RESTART IDENTITY CASCADE"
             )
         )
     with sessionmaker(bind=engine, expire_on_commit=False)() as session:
