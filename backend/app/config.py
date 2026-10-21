@@ -15,6 +15,19 @@ class Settings(BaseSettings):
     acled_email: str | None = None
     acled_password: str | None = None
 
+    # Link boards (app.boards). "auto" uses Claude when Anthropic credentials are set
+    # (ANTHROPIC_API_KEY or an `ant auth login` profile) and the gazetteer otherwise.
+    board_extractor: str = "auto"
+    board_claude_model: str = "claude-opus-5-5"
+    # Look up places Claude finds that the events table has never seen (OpenStreetMap).
+    board_geocoder: str = "nominatim"
+    # Ground heights for exported scenes, so points sit on the terrain (Open-Meteo).
+    board_elevation: str = "open-meteo"
+    # Browser origins allowed to call the API, e.g. the gods-eye-view globe.
+    cors_origins: str = "http://localhost:4173,http://127.0.0.1:4173"
+    # NASA FIRMS map key for `python -m app.live firms` (free, firms.modaps.eosdis.nasa.gov).
+    firms_map_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

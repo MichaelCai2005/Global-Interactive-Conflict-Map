@@ -216,6 +216,33 @@ What it does:
   priority, status and notes.
 - **Stories**: guided starting points (Ukraine 2022, Syria, Bosnia, Afghanistan, Gaza)
   that fly to the place and play its timeline. They're under "Stories & help".
+- **Boards**: paste a news article or name a topic. A link board then suggests the
+  places, groups and events it connects to, each with a reason and source, to accept or
+  reject. The board grows on the map as the timeline plays, and opens as a briefing on
+  the 3D globe. See [Link boards](#link-boards).
+
+## Link boards
+
+Paste an article (or name a topic) and the backend drafts a link-analysis board:
+- **What's in it:** the places and armed groups the article names, matched to the events
+  data, plus GDELT events coded from the article itself.
+- **When:** nearby events in the weeks before, and the deadliest earlier violence at
+  those places.
+- **Live data:** recorded military flights and fires nearby.
+
+Every link carries its rule, evidence, source and a confidence, and starts as a
+suggestion. The Boards tab is where an analyst reviews it. The board then plays as a
+briefing on a fork of [gods-eye-view](https://github.com/bilawalsidhu/gods-eye-view), a
+3D globe, one shot per time step, ending on live military flights for recent stories.
+
+```bash
+python -m app.live adsb            # record military flights (adsb.lol) for boards' history
+```
+
+Claude reads articles when `ANTHROPIC_API_KEY` is set (`pip install -e ".[ai]"`).
+Without it, a gazetteer built from the events data finds the places and groups. The
+[link boards guide](docs/link-boards.md) covers running the globe, the rules, the export
+and the limits.
 
 ## API
 
@@ -240,3 +267,13 @@ What it does:
 | `GET /ingest-runs` | Counts for each load |
 | `GET /ingest-runs/{id}/rejected` | Rejected rows with reasons |
 | `GET /health` | Database check |
+| `GET/POST /boards`, `GET/PATCH/DELETE /boards/{id}` | Link boards: list, create empty, read with nodes and links, rename, delete |
+| `POST /boards/draft` | Draft a board from an article `url` or pasted `text` (optional `title`, `published`, `lookback_days`, `extractor`) |
+| `POST /boards/topic` | Draft a board from a `topic`: recent coverage from GDELT's article search, each article linked like a pasted one |
+| `POST /boards/{id}/review` | Accept or reject many `node_ids` and `link_ids` at once |
+| `PATCH /boards/{id}/nodes/{node_id}`, `PATCH /boards/{id}/links/{link_id}` | Accept, reject or relabel one item (rejecting a node rejects its links; accepting a link accepts its ends) |
+| `POST /boards/{id}/nodes`, `POST /boards/{id}/links` | Add an event (`event_id`) or a note at a point; draw a link with a reason |
+| `POST /boards/{id}/nodes/{node_id}/expand` | Suggest more connections around one item |
+| `GET /boards/{id}/geojson` | The board for the map; each feature has `day` for time filtering |
+| `GET /boards/{id}/bundle` | A `.gevbundle.json` for gods-eye-view's Scenes > IMPORT (`include=accepted` or `all`) |
+| `GET /boards/{id}/scene.json`, `GET /scene-packs/boards/{id}/{include}/{n}.geojson` | The same scene with its packs served live, for the fork's `conflict-map` source |

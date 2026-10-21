@@ -12,6 +12,8 @@ import { RiskPanel } from "./components/RiskPanel";
 import { TasksPanel } from "./components/TasksPanel";
 import { TimelineBar } from "./components/TimelineBar";
 import { WatchlistPanel } from "./components/WatchlistPanel";
+import { useBoard, useBoardGeoJson } from "./board/api";
+import { BoardPanel } from "./board/BoardPanel";
 import { Welcome } from "./components/Welcome";
 import { type DateWindow, addDays, clampWindow, formatDate, intervalFor, shiftWindow, stepFor } from "./lib/dates";
 import { formatCount } from "./lib/format";
@@ -55,6 +57,10 @@ export function App() {
   const layer = useMapLayer(mapScope, cell, timeWindow !== null && !riskMode);
   const timeline = useTimeline({ filters: state.filters, window: domain, bbox: countingBbox }, interval, domain !== null);
   const selected = useEvent(state.selectedEventId).data;
+  // On the Boards tab the open board is drawn over the events.
+  const boardId = state.panel === "board" ? state.boardId : null;
+  const [boardNode, setBoardNode] = useState<number | null>(null);
+  const boardLayer = useBoardGeoJson(boardId, useBoard(boardId).data?.updated_at).data ?? null;
   const openTasks = useTasks().data?.filter((t) => t.status !== "done").length ?? 0;
 
   // Playback: once the map has the current window's data, wait a beat, then step forward.
@@ -149,6 +155,7 @@ export function App() {
             [
               ["overview", "Overview"],
               ["risk", "Risk"],
+              ["board", "Boards"],
               ["watchlist", "Watchlist"],
               ["tasks", openTasks ? `Tasks (${openTasks})` : "Tasks"],
             ] as const
@@ -192,6 +199,16 @@ export function App() {
               if (r.longitude !== null && r.latitude !== null) map.current?.flyTo(r.longitude, r.latitude, 5);
             }}
           />
+        ) : state.panel === "board" ? (
+          <BoardPanel
+            boardId={state.boardId}
+            selectedNodeId={boardNode}
+            mapCenter={state.camera}
+            onOpen={(id) => dispatch({ type: "board", boardId: id })}
+            onSelectNode={setBoardNode}
+            onFocus={(lon, lat) => map.current?.flyTo(lon, lat)}
+            onWindow={(w) => dispatch({ type: "window", window: clampWindow(w, domain) })}
+          />
         ) : state.panel === "watchlist" ? (
           <WatchlistPanel
             filters={state.filters}
@@ -215,6 +232,9 @@ export function App() {
           selected={selected ? { lon: selected.longitude, lat: selected.latitude } : null}
           risk={riskLayer}
           riskSelected={riskCountry}
+          board={boardId !== null ? boardLayer : null}
+          boardSelected={boardNode}
+          onBoardSelect={setBoardNode}
           onMove={(camera, viewBbox) => dispatch({ type: "camera", camera, viewBbox })}
           onSelect={(eventId) => dispatch({ type: "select", eventId })}
           onRiskSelect={setRiskCountry}

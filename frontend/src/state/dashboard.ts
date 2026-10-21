@@ -2,7 +2,7 @@ import type { Bbox } from "../api/types";
 import { type DateWindow, addDays } from "../lib/dates";
 
 export type Violence = "all" | "violent" | "signals";
-export type Panel = "overview" | "risk" | "watchlist" | "tasks";
+export type Panel = "overview" | "risk" | "watchlist" | "tasks" | "board";
 
 export interface Filters {
   sources: string[];
@@ -30,6 +30,8 @@ export interface DashboardState {
   followView: boolean;
   selectedEventId: number | null;
   panel: Panel;
+  /** The link board open on the Boards tab. */
+  boardId: number | null;
   playing: boolean;
   speed: number;
 }
@@ -54,6 +56,7 @@ export function initialState(search: string): DashboardState {
   const [lon, lat, zoom] = (q.get("at") ?? "").split(",").map(Number);
   const panel = q.get("panel");
   const event = Number(q.get("event"));
+  const board = Number(q.get("board"));
   return {
     filters: {
       sources: list("source"),
@@ -70,7 +73,8 @@ export function initialState(search: string): DashboardState {
     viewBbox: null,
     followView: q.get("follow") !== "0",
     selectedEventId: Number.isInteger(event) && event > 0 ? event : null,
-    panel: panel === "risk" || panel === "watchlist" || panel === "tasks" ? panel : "overview",
+    panel: panel === "risk" || panel === "watchlist" || panel === "tasks" || panel === "board" ? panel : "overview",
+    boardId: Number.isInteger(board) && board > 0 ? board : null,
     playing: false,
     speed: 1,
   };
@@ -96,6 +100,7 @@ export function toSearch(state: DashboardState): string {
   if (!state.followView) q.set("follow", "0");
   if (state.selectedEventId) q.set("event", String(state.selectedEventId));
   if (state.panel !== "overview") q.set("panel", state.panel);
+  if (state.panel === "board" && state.boardId) q.set("board", String(state.boardId));
   return q.toString();
 }
 
@@ -108,6 +113,7 @@ export type Action =
   | { type: "followView"; followView: boolean }
   | { type: "select"; eventId: number | null }
   | { type: "panel"; panel: Panel }
+  | { type: "board"; boardId: number | null }
   | { type: "play"; playing: boolean }
   | { type: "speed"; speed: number }
   | { type: "story"; range: DateWindow; windowDays: number };
@@ -130,6 +136,8 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, selectedEventId: action.eventId };
     case "panel":
       return { ...state, panel: action.panel };
+    case "board":
+      return { ...state, panel: "board", boardId: action.boardId };
     case "play":
       return { ...state, playing: action.playing };
     case "speed":

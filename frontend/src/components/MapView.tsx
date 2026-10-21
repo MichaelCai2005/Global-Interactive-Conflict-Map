@@ -16,6 +16,7 @@ import type { Bbox, CellProps, MapLayer, PointProps } from "../api/types";
 import { type DateWindow, formatDate, toDay } from "../lib/dates";
 import { eventTypeLabel, formatCount, plural, sourceLabel } from "../lib/format";
 import { viewBbox } from "../lib/geo";
+import { BOARD_STYLE_COLORS, KIND_LABELS } from "../board/style";
 import type { Camera } from "../state/dashboard";
 import { COLORS } from "../theme";
 
@@ -41,9 +42,13 @@ interface Props {
   /** Country risk scores; when given, the map shows them instead of events. */
   risk: FeatureCollection | null;
   riskSelected: string | null;
+  /** A link board (see board/), drawn over the events up to the window's end. */
+  board?: FeatureCollection | null;
+  boardSelected?: number | null;
   onMove(camera: Camera, bbox: Bbox | null): void;
   onSelect(eventId: number): void;
   onRiskSelect(iso3: string): void;
+  onBoardSelect?(nodeId: number): void;
 }
 
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -91,17 +96,20 @@ export function MapView({
   selected,
   risk,
   riskSelected,
+  board = null,
+  boardSelected = null,
   onMove,
   onSelect,
   onRiskSelect,
+  onBoardSelect,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [ready, setReady] = useState(false);
   const [styleError, setStyleError] = useState(false);
   // Handlers change every render; the map's listeners read them through a ref.
-  const handlers = useRef({ onMove, onSelect, onRiskSelect });
-  handlers.current = { onMove, onSelect, onRiskSelect };
+  const handlers = useRef({ onMove, onSelect, onRiskSelect, onBoardSelect });
+  handlers.current = { onMove, onSelect, onRiskSelect, onBoardSelect };
 
   useImperativeHandle(ref, () => ({
     fitBbox(bbox) {
@@ -230,6 +238,7 @@ export function MapView({
           "circle-stroke-width": 2.5,
         },
       });
+      addBoardLayers(map, firstLabel);
       map.addLayer({
         id: "selection",
         type: "circle",
@@ -256,10 +265,14 @@ export function MapView({
       map.getCanvas().style.cursor = "";
       popup.remove();
     };
-    for (const id of ["points", "points-country", "cells", "risk"]) {
+    for (const id of ["points", "points-country", "cells", "risk", "board-nodes"]) {
       map.on("mousemove", id, hover);
       map.on("mouseleave", id, leave);
     }
+    map.on("click", "board-nodes", (e) => {
+      const nodeId = e.features?.[0]?.properties?.node_id;
+      if (typeof nodeId === "number") handlers.current.onBoardSelect?.(nodeId);
+    });
     const pick = (e: MapLayerMouseEvent) => {
       const id = e.features?.[0]?.properties?.id;
       if (typeof id === "number") handlers.current.onSelect(id);
@@ -308,6 +321,56 @@ export function MapView({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource("board") as GeoJSONSource).setData(board ?? EMPTY);
+    for (const id of BOARD_LAYERS) map.setLayoutProperty(id, "visibility", board ? "visible" : "none");
+  }, [ready, board]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    // The board as it stood at the window's end: items appear as the timeline plays, and
+    // items from before the window fade. Places and groups have no date and always show.
+    const end = window ? toDay(window.end) : Number.MAX_SAFE_INTEGER;
+    const start = window ? toDay(window.start) : 0;
+    const shown: ExpressionSpecification = [
+      "any",
+      ["==", ["typeof", ["get", "day"]], "null"],
+      ["<=", ["to-number", ["get", "day"], 0], end],
+    ];
+    const fade: ExpressionSpecification = [
+      "case",
+      ["==", ["typeof", ["get", "day"]], "null"],
+      1,
+      ["<", ["to-number", ["get", "day"], 0], start],
+      0.45,
+      1,
+    ];
+    map.setFilter("board-links-accepted", ["all", ["has", "link_id"], ["==", ["get", "status"], "accepted"], shown]);
+    map.setFilter("board-links-suggested", ["all", ["has", "link_id"], ["==", ["get", "status"], "suggested"], shown]);
+    map.setFilter("board-tracks", ["all", ["has", "node_id"], ["==", ["geometry-type"], "LineString"], shown]);
+    map.setFilter("board-nodes", ["all", ["has", "node_id"], ["==", ["geometry-type"], "Point"], shown]);
+    map.setFilter("board-labels", [
+      "all",
+      ["has", "node_id"],
+      ["==", ["geometry-type"], "Point"],
+      ["in", ["get", "kind"], ["literal", ["article", "place", "actor", "claim", "note"]]],
+      shown,
+    ]);
+    map.setPaintProperty("board-nodes", "circle-opacity", fade);
+    map.setPaintProperty("board-links-suggested", "line-opacity", ["*", 0.75, fade]);
+  }, [ready, window]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    const isSelected: ExpressionSpecification = ["==", ["get", "node_id"], boardSelected ?? -1];
+    map.setPaintProperty("board-nodes", "circle-stroke-color", ["case", isSelected, COLORS.ink, COLORS.surface]);
+    map.setPaintProperty("board-nodes", "circle-stroke-width", ["case", isSelected, 3, 1]);
+  }, [ready, boardSelected]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!ready || !map || !layer) return;
     (map.getSource("events") as GeoJSONSource).setData(layer.features);
     if (layer.mode === "grid") {
@@ -326,10 +389,13 @@ export function MapView({
     // Older events in the window fade, so the newest activity stands out during playback.
     const start = toDay(window.start);
     const end = Math.max(toDay(window.end), start + 1);
-    const opacity: ExpressionSpecification = ["interpolate", ["linear"], ["get", "day"], start, 0.3, end, 0.95];
+    // With a board open, events are background and stay dim.
+    const [low, high] = board ? [0.12, 0.35] : [0.3, 0.95];
+    const opacity: ExpressionSpecification = ["interpolate", ["linear"], ["get", "day"], start, low, end, high];
     map.setPaintProperty("points", "circle-opacity", opacity);
     map.setPaintProperty("points-country", "circle-stroke-opacity", opacity);
-  }, [ready, window]);
+    map.setPaintProperty("cells", "circle-opacity", board ? 0.25 : 0.7);
+  }, [ready, window, board]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -362,6 +428,72 @@ export function MapView({
   );
 }
 
+const BOARD_LAYERS = ["board-links-suggested", "board-links-accepted", "board-tracks", "board-nodes", "board-labels"];
+
+const BOARD_COLOR = [
+  "match",
+  ["get", "style"],
+  ...Object.entries(BOARD_STYLE_COLORS).flat(),
+  BOARD_STYLE_COLORS.note!,
+] as unknown as ExpressionSpecification;
+
+/** Board items above the events: links, flight tracks, points by kind, and names. */
+function addBoardLayers(map: MapLibreMap, beforeLabel: string | undefined) {
+  map.addSource("board", { type: "geojson", data: EMPTY });
+  const hidden = { visibility: "none" as const };
+  map.addLayer({
+    id: "board-links-suggested",
+    type: "line",
+    source: "board",
+    layout: hidden,
+    paint: { "line-color": "#8d99ae", "line-width": 1.5, "line-dasharray": [3, 2] },
+  });
+  map.addLayer({
+    id: "board-links-accepted",
+    type: "line",
+    source: "board",
+    layout: hidden,
+    paint: { "line-color": "#e9ecef", "line-width": 2.5 },
+  });
+  map.addLayer({
+    id: "board-tracks",
+    type: "line",
+    source: "board",
+    layout: hidden,
+    paint: { "line-color": BOARD_COLOR, "line-width": 2.5 },
+  });
+  map.addLayer({
+    id: "board-nodes",
+    type: "circle",
+    source: "board",
+    layout: hidden,
+    paint: {
+      "circle-color": BOARD_COLOR,
+      "circle-radius": ["match", ["get", "kind"], "article", 9, "place", 7, "actor", 7, 5.5],
+      "circle-stroke-color": COLORS.surface,
+      "circle-stroke-width": 1,
+    },
+  });
+  // Names use the basemap's own font, so they need no extra font files.
+  const font = beforeLabel ? (map.getLayoutProperty(beforeLabel, "text-font") as string[] | undefined) : undefined;
+  map.addLayer({
+    id: "board-labels",
+    type: "symbol",
+    source: "board",
+    layout: {
+      ...hidden,
+      "text-field": ["get", "label"],
+      ...(font ? { "text-font": font } : {}),
+      "text-size": ["match", ["get", "kind"], "article", 13, 11.5],
+      "text-offset": [0, 1.1],
+      "text-anchor": "top",
+      "text-max-width": 14,
+      "text-optional": true,
+    },
+    paint: { "text-color": COLORS.ink, "text-halo-color": COLORS.surface, "text-halo-width": 1.5 },
+  });
+}
+
 /** Grid cells run from blue (all signals) through grey (mixed) to orange (all violence). */
 function shareColor(): ExpressionSpecification {
   return [
@@ -383,7 +515,12 @@ function tooltip(feature: MapGeoJSONFeature): HTMLElement {
     if (className) div.className = className;
     el.append(div);
   };
-  if ("score" in feature.properties) {
+  if ("node_id" in feature.properties) {
+    const p = feature.properties as { label: string; kind: string; status: string };
+    line(p.label, "map-tooltip-title");
+    line(`${KIND_LABELS[p.kind] ?? p.kind} · ${p.status}`);
+    line("Click to find it on the board", "map-tooltip-hint");
+  } else if ("score" in feature.properties) {
     const p = feature.properties as { name: string; score: number; change?: number | null; trend?: string | null; alarm?: boolean };
     line(p.name, "map-tooltip-title");
     const change =

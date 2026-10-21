@@ -1,0 +1,230 @@
+/* The Boards tab. Uses the tokens in styles.css; colours of board items are in style.ts. */
+
+.board-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.board-panel .section-title {
+  margin: 10px 0 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+}
+
+.board-panel .back {
+  align-self: flex-start;
+}
+
+.board-title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.board-notes {
+  border-left: 3px solid var(--serious);
+  padding-left: 8px;
+}
+
+.board-new {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.board-new textarea,
+.board-panel .card textarea,
+.board-panel .card input,
+.board-panel .card select {
+  width: 100%;
+  resize: vertical;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+}
+
+.field > span:first-child {
+  color: var(--ink-2);
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+button.primary,
+a.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled),
+a.button.primary:hover {
+  background: #2f76cc;
+}
+
+a.button {
+  display: inline-block;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+a.button:hover {
+  background: #2d333b;
+}
+
+.board-present {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.board-link.is-accepted {
+  border-left: 3px solid var(--good);
+}
+
+.board-link.is-rejected {
+  opacity: 0.55;
+}
+
+.board-link p {
+  margin: 0;
+}
+
+.board-link blockquote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
+.confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.confidence-track {
+  display: block;
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.confidence-bar {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.board-link-ends {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+}
+
+.link-end,
+.node-label {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.link-end:hover:not(:disabled),
+.node-label:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.board-nodes details {
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+}
+
+.board-nodes summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.node-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.node-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.node-row.is-selected {
+  background: var(--surface-3);
+}
+
+.node-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.node-actions button {
+  padding: 1px 6px;
+  font-size: 12px;
+}
+
+button.danger {
+  color: var(--critical);
+  align-self: flex-start;
+}
