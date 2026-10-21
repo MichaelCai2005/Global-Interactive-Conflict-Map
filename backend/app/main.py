@@ -2,11 +2,13 @@ import logging
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api import events, features, ingest, maps, risk, workspace
+from app.api import boards, events, features, ingest, maps, risk, workspace
+from app.config import get_settings
 from app.db import get_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -24,6 +26,14 @@ app.include_router(workspace.router)
 app.include_router(features.router)
 app.include_router(risk.router)
 app.include_router(ingest.router)
+app.include_router(boards.router)
+# The gods-eye-view globe loads board scenes from this API, from its own origin. It only
+# reads, so only GET is allowed across origins.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
+    allow_methods=["GET"],
+)
 
 
 @app.get("/health", tags=["meta"])
