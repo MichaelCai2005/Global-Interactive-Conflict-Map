@@ -5,4 +5,6 @@ __pycache__/
 .ruff_cache/
 .env
 data/
+# Downloaded datasets stay out, but app/data holds files the package ships.
+!backend/app/data/
 *.egg-info/
