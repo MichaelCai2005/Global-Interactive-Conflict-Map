@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # NASA FIRMS map key for `python -m app.live firms` (free, firms.modaps.eosdis.nasa.gov).
     firms_map_key: str | None = None
 
+    # Hosting (app.security, app.publish). With ADMIN_TOKEN set, every request that changes
+    # data must send it as `Authorization: Bearer <token>`. PUBLIC_MODE marks a public
+    # deployment: writes are refused without the token, and the API won't start if the
+    # database holds ACLED events, whose license forbids showing them on a public site.
+    admin_token: str | None = None
+    public_mode: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

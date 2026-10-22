@@ -51,7 +51,7 @@ def fetch(url: str, dest: Path, attempts: int = 4) -> Path:
         except urllib.error.HTTPError as exc:
             if exc.code == 404 or attempt == attempts:
                 raise
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
             if attempt == attempts:
                 raise
         wait = 2**attempt
@@ -87,7 +87,7 @@ def _request_json(request: urllib.request.Request, attempts: int = 4) -> dict | 
         except urllib.error.HTTPError as exc:
             if exc.code < 500 or attempt == attempts:
                 raise
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
             if attempt == attempts:
                 raise
         wait = 2**attempt

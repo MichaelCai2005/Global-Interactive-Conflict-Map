@@ -208,6 +208,9 @@ Tests need a PostGIS database at `TEST_DATABASE_URL`
 ruff format --check . && ruff check . && pytest
 ```
 
+To put the map online (hosted database, API and frontend, kept current nightly, with
+ACLED left out as its license requires), see [docs/hosting.md](docs/hosting.md).
+
 ## Map dashboard
 
 `frontend/` is a React and TypeScript app (Vite, MapLibre GL, TanStack Query). With the API
