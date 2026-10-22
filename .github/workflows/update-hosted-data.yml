@@ -1,0 +1,77 @@
+# Keeps the hosted database current: loads yesterday's GDELT events, rebuilds this month's
+# cell features and the risk scores, and prunes old live observations. Runs nightly and on
+# demand (Actions tab > Update hosted data > Run workflow).
+#
+# Needs a repository secret HOSTED_DATABASE_URL, the hosted database's direct (not pooled)
+# URL in the form postgresql+psycopg://user:pass@host/db?sslmode=require. Without it every
+# step is skipped. GitHub only runs schedules from the default branch, so this starts
+# nightly once it is merged there.
+name: Update hosted data
+
+on:
+  schedule:
+    # GDELT posts each day's file early the next morning (US Eastern).
+    - cron: "30 12 * * *"
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "GDELT day to load, YYYY-MM-DD (default: yesterday)"
+        required: false
+
+concurrency:
+  group: hosted-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.HOSTED_DATABASE_URL }}
+    steps:
+      - name: Check for the database secret
+        if: env.DATABASE_URL == ''
+        run: echo "::notice::HOSTED_DATABASE_URL is not set, so there is nothing to update."
+      - uses: actions/checkout@v4
+        if: env.DATABASE_URL != ''
+      - uses: actions/setup-python@v5
+        if: env.DATABASE_URL != ''
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        if: env.DATABASE_URL != ''
+        run: pip install .
+      - name: Migrate
+        if: env.DATABASE_URL != ''
+        run: alembic upgrade head
+      - name: Load GDELT
+        if: env.DATABASE_URL != ''
+        env:
+          DAY: ${{ inputs.day }}
+        run: |
+          day="${DAY:-$(date -u -d yesterday +%F)}"
+          echo "MONTH=${day:0:7}" >> "$GITHUB_ENV"
+          python -m app.ingest download gdelt --start "$day" --out data
+          shopt -s nullglob
+          files=(data/gdelt/*.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::warning::GDELT has no file for $day yet"
+            exit 0
+          fi
+          python -m app.ingest load gdelt "${files[@]}"
+      - name: Rebuild features and risk scores
+        if: env.DATABASE_URL != ''
+        run: |
+          python -m app.ingest build-features --start "$MONTH"
+          python -m app.risk build
+      - name: Prune old live observations
+        if: env.DATABASE_URL != ''
+        run: python -m app.live prune --days 90
+      - name: Check nothing unpublishable arrived
+        if: env.DATABASE_URL != ''
+        run: python -m app.publish check
