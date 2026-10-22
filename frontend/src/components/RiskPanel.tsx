@@ -3,6 +3,7 @@ import type { EventOut } from "../api/types";
 import {
   RISK_COMPONENTS,
   type RiskPoint,
+  type RiskPoints,
   type RiskRegion,
   type RiskSort,
   type RiskTrend,
@@ -121,15 +122,26 @@ export function RiskPanel({ week, onEvent, onCountry, selected: selectedProp, on
               {showAll ? "Show fewer" : `Show all ${rows.length} countries`}
             </button>
           )}
-          <p className="muted small risk-method">
-            Each score adds four parts: History (deaths, fading with a 26-week half-life, up to 40
-            points), Surge (violence above the country's own baseline), Spread (violence in
-            neighbouring countries) and Signal (hostile shifts in GDELT news coverage), up to 20 each.
-            A part with no data that week is left out and the rest are scaled to 100.
-          </p>
+          {data && <Method weights={data.weights} fitted={data.weights_fitted} />}
         </>
       )}
     </div>
+  );
+}
+
+function Method({ weights, fitted }: { weights: RiskPoints; fitted: boolean }) {
+  const most = (c: keyof RiskPoints) => Math.round(weights[c]);
+  return (
+    <p className="muted small risk-method">
+      Each score adds four parts: History (deaths, fading with a 26-week half-life, up to{" "}
+      {most("history")} points), Surge (violence above the country's own baseline, up to{" "}
+      {most("surge")}), Spread (violence in neighbouring countries, up to {most("spread")}) and
+      Signal (hostile shifts in GDELT news coverage, up to {most("signal")}). A part with no data
+      that week is left out and the rest are scaled to 100.{" "}
+      {fitted
+        ? "History, Surge and Spread are weighted by how well each foretold the next four weeks' deaths, tested on each year since 2000 with weights fitted only on the years before; Signal's share is still set by hand."
+        : "The weights are a hand-set starting point."}
+    </p>
   );
 }
 

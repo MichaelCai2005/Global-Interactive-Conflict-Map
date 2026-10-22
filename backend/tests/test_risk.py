@@ -12,6 +12,14 @@ from app.risk import (
     trend_label,
 )
 
+
+@pytest.fixture(autouse=True)
+def hand_set_weights(monkeypatch):
+    """These tests check how the score is built, so they pin the weights rather than
+    follow whatever `python -m app.risk_model fit` last wrote."""
+    monkeypatch.setattr(risk, "WEIGHTS", dict(risk.HAND_SET_WEIGHTS))
+
+
 START = date(2021, 1, 4)  # a Monday
 N_WEEKS = 80
 WEEKS = [START + timedelta(weeks=i) for i in range(N_WEEKS)]
@@ -228,6 +236,8 @@ def test_risk_endpoints_explain_the_escalation(client, scored_db):
     assert ukr["name"] == "Ukraine"
     assert ukr["change"] > 0
     assert ukr["score"] == pytest.approx(sum(ukr["points"].values()))
+    assert week["weights"] == risk.HAND_SET_WEIGHTS
+    assert week["weights_fitted"] is False
 
     risers = client.get("/risk", params={"week": str(WEEKS[60]), "sort": "rise"}).json()
     assert risers["regions"][0]["iso3"] == "UKR"

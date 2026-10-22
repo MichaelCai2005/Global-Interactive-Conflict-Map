@@ -15,7 +15,10 @@ Each country gets four components every week, following "Scoring Conflict Risk O
 Each component becomes a level from 0 to 1 on a fixed scale: History and Spread on a log
 scale where 10,000 decayed deaths is full (about 270 deaths a week sustained), Surge as the
 CUSUM over its cap (the alarm is half), Signal as its z-score over 3. The score is the
-weighted sum of levels, 0-100: History 40, Surge, Spread and Signal 20 each. A component
+weighted sum of levels, 0-100. The weights come from app/data/risk_weights.json, fitted by
+app.risk_model to the next four weeks' deaths and backtested year by year (History 54,
+Surge 15, Spread 11; Signal keeps a hand-set 20, as GDELT is too sparse to fit). Without
+that file the hand-set 40/20/20/20 is used. A component
 no country has a value for that week (Signal before GDELT has a baseline, Surge after
 UCDP's last release) is left out and the rest are scaled up to fill 100.
 
@@ -26,8 +29,8 @@ Where this departs from the doc, and why:
   - A weighted sum, not a geometric mean. Surge and Signal are zero most weeks (a war at a
     steady level does not surge, and GDELT is loaded in patches), and a geometric mean then
     scores an ongoing war near zero. The doc names the arithmetic form as the alternative.
-  - History weighs double, so how violent a place is counts more than whether it is
-    changing. The doc's next step, fitting weights to next month's violence, replaces these.
+  - History weighs most, so how violent a place is counts more than whether it is changing.
+    The fit chose this; see docs/risk-backtest.md.
 
 History and Surge count UCDP and ACLED only: hand-coded sources are the outcome, GDELT
 the leading signal. Duplicates already linked to a higher-priority source are skipped.
@@ -38,12 +41,14 @@ Run with `python -m app.risk build`. It rebuilds risk_countries and risk_scores.
 """
 
 import argparse
+import json
 import logging
 import math
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -78,8 +83,21 @@ GRID_COLUMNS = 720
 TREND_WEEKS = 12
 HIGH_SCORE = 50.0
 TREND_MIN_CHANGE = 10.0
-WEIGHTS = {"history": 40.0, "surge": 20.0, "spread": 20.0, "signal": 20.0}
-COMPONENTS = tuple(WEIGHTS)
+HAND_SET_WEIGHTS = {"history": 40.0, "surge": 20.0, "spread": 20.0, "signal": 20.0}
+COMPONENTS = tuple(HAND_SET_WEIGHTS)
+WEIGHTS_FILE = Path(__file__).parent / "data" / "risk_weights.json"
+
+
+def load_weights(path: Path = WEIGHTS_FILE) -> dict[str, float]:
+    """Weights fitted by `python -m app.risk_model fit`, or the hand-set ones before a fit."""
+    try:
+        fitted = json.loads(path.read_text())["weights"]
+        return {name: float(fitted[name]) for name in COMPONENTS}
+    except (OSError, KeyError, ValueError):
+        return dict(HAND_SET_WEIGHTS)
+
+
+WEIGHTS = load_weights()
 FULL_HISTORY = 10_000.0
 FULL_SIGNAL = 3.0
 
@@ -240,11 +258,12 @@ def score_countries(
     data: dict[str, CountryWeeks],
     neighbours: dict[str, set[str]],
     provisional_after: date | None,
+    half_life: float = HALF_LIFE_WEEKS,
 ) -> list[ScoreRow]:
-    """Every country's components, percentiles, score and trend for every week."""
+    """Every country's components, score and trend for every week."""
     countries = sorted(data)
     n_weeks = len(weeks)
-    decay = 2 ** (-1 / HALF_LIFE_WEEKS)
+    decay = 2 ** (-1 / half_life)
     world_gdelt = [sum(data[c].gdelt_events[w] for c in countries) for w in range(n_weeks)]
     # A source covers a week when it has any violent event anywhere that week.
     covered = {

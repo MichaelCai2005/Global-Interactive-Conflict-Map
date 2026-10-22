@@ -1,0 +1,22 @@
+{
+  "model": "negative binomial (NB2, log link) of deaths in the next 4 weeks",
+  "fitted_on": [
+    "1989-12-25",
+    "2025-11-24"
+  ],
+  "country_weeks": 236250,
+  "intercept": -1.1617,
+  "alpha": 10.535,
+  "coefficients": {
+    "history": 7.1963,
+    "surge": 2.0154,
+    "spread": 1.4424
+  },
+  "weights": {
+    "history": 54.0,
+    "surge": 15.1,
+    "spread": 10.8,
+    "signal": 20.0
+  },
+  "note": "Signal is not fitted (too few GDELT weeks) and keeps its hand-set points."
+}

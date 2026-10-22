@@ -331,6 +331,14 @@ class RiskWeek(BaseModel):
     last_week: date
     provisional: bool = Field(description="UCDP and ACLED do not cover this week yet")
     regions: list[RiskRegion]
+    weights: RiskPoints = Field(
+        description="Most points each component can add, before parts with no data that week "
+        "are left out and the rest scaled to 100"
+    )
+    weights_fitted: bool = Field(
+        description="Weights fitted to the next four weeks' deaths by `python -m app.risk_model "
+        "fit` (Signal excepted), rather than the hand-set starting point"
+    )
 
 
 class RiskPoint(BaseModel):

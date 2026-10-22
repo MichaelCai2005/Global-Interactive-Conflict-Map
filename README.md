@@ -104,9 +104,9 @@ is the sum of four parts, so the map can always say why a country is red:
 
 | Part | Question | How | Max points |
 | --- | --- | --- | --- |
-| History | How violent lately? | UCDP and ACLED deaths, fading with a 26-week half-life; log scale, 10,000 decayed deaths is full | 40 |
-| Surge | Is this week abnormal here? | z-score of log(1 + violent events) against weeks t-56 to t-5, accumulated by a CUSUM (alarm at 4, capped at 8) | 20 |
-| Spread | Are neighbours heating up? | Mean History of countries with events within about 165 km | 20 |
+| History | How violent lately? | UCDP and ACLED deaths, fading with a 26-week half-life; log scale, 10,000 decayed deaths is full | 54 |
+| Surge | Is this week abnormal here? | z-score of log(1 + violent events) against weeks t-56 to t-5, accumulated by a CUSUM (alarm at 4, capped at 8) | 15 |
+| Spread | Are neighbours heating up? | Mean History of countries with events within about 165 km | 11 |
 | Signal | Is the news turning? | GDELT share of world conflict news, Goldstein score and tone, each against the country's own baseline | 20 |
 
 A part no country has data for that week is left out and the rest scale up to 100. Each
@@ -120,9 +120,45 @@ that week, and for a country shows the score by part over time, a sentence on wh
 it, and the week's deadliest events. Rebuild after loading new events; on all of UCDP it
 takes about 15 seconds.
 
-The four weights are a hand-set starting point. The next step from the design doc is to fit
-them (a negative binomial model of next month's deaths) and grade both with
-rolling-origin tests.
+### Fitted weights and backtest
+
+The weights are fitted, not set by hand. `python -m app.risk_model fit` (needs numpy:
+`pip install -e ".[model]"`) fits the design doc's
+negative binomial model of the next four weeks' deaths on History, Surge and Spread, and
+writes the weights to `backend/app/data/risk_weights.json`, which `app.risk build` reads.
+Because the model uses a log link, the weights are the model's coefficients scaled to the
+points they share, so the score is still a sum of parts. Signal can't be fitted: GDELT is
+loaded for only about 19 weeks. It keeps its hand-set 20 points until more is loaded.
+
+`python -m app.risk_model backtest` grades the weights with rolling-origin tests. Each year
+from 2000 to 2025 is scored with weights fitted only on earlier years. Results on UCDP
+1989-2025 (170,352 country-weeks):
+
+| Weights | Any 25+ deaths next 4 weeks (AUC / AP) | Flare-up in a quiet country (AUC / AP) | Top 10 precision |
+| --- | --- | --- | --- |
+| Fitted | 0.968 / 0.822 | 0.829 / 0.032 | 0.862 |
+| Hand-set 40/20/20 | 0.960 / 0.787 | 0.818 / 0.032 | 0.836 |
+| History alone | 0.972 / 0.849 | 0.814 / 0.027 | 0.884 |
+
+AUC is the chance a violent week outranked a calm one. AP (average precision) rewards
+putting violent weeks at the very top. A quiet country is one with fewer than 25 deaths in
+the past 26 weeks.
+
+What this shows:
+
+- Fitted beats hand-set on every measure.
+- The fitted weights barely move from one test year to the next: History rises from 41 to
+  54 points, Surge stays at 15-20, Spread drops from 22 to 11.
+- History alone ranks ongoing wars best. Surge and Spread pay off on flare-ups in quiet
+  countries, the case an analyst most needs to see. Even there, only about 3% of the
+  highest-ranked quiet weeks turn violent, against a base rate of 0.6%.
+- Out of sample, 30% of weeks scoring 40-50 saw 25+ deaths in the next four weeks; at
+  60-70 it was 89%.
+- A half-life of 26 weeks for History beat 4, 8, 13 and 52 weeks on the model's fit
+  (`--half-life` reruns it).
+
+[docs/risk-backtest.md](docs/risk-backtest.md) has the full report, with calibration by
+score band and the known weeks. Refit and rebuild after loading a new UCDP release.
 
 ## Running it
 
