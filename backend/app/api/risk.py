@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
+from app import risk as scoring
 from app.db import get_db
 from app.models import Event, RiskCountry, RiskScore
 from app.risk import CUSUM_ALARM, FULL_HISTORY, HALF_LIFE_WEEKS, monday
@@ -102,6 +103,8 @@ def risk_week(
         last_week=last,
         provisional=bool(provisional),
         regions=regions,
+        weights=RiskPoints(**scoring.WEIGHTS),
+        weights_fitted=scoring.WEIGHTS != scoring.HAND_SET_WEIGHTS,
     )
 
 

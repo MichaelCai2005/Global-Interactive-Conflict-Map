@@ -28,6 +28,8 @@ const WEEK: RiskWeek = {
       provisional: false,
     },
   ],
+  weights: { history: 54, surge: 15.1, spread: 10.8, signal: 20 },
+  weights_fitted: true,
 };
 
 const SERIES: RiskSeries = {
@@ -130,6 +132,10 @@ describe("RiskPanel", () => {
     expect(await screen.findByText("Week of 9 Oct 2023")).toBeTruthy();
     expect(fetchMock.mock.calls[0]![0]).toContain("week=2023-10-11");
     expect(screen.getByText("▲ Surge alarm")).toBeTruthy();
+    const method = screen.getByText(/Each score adds four parts/).textContent!;
+    expect(method).toContain("up to 54 points");
+    expect(method).toContain("Spread (violence in neighbouring countries, up to 11)");
+    expect(method).toContain("tested on each year since 2000");
 
     await userEvent.click(screen.getByRole("button", { name: /Israel/ }));
     expect(onCountry).toHaveBeenCalledWith(expect.objectContaining({ iso3: "ISR" }));

@@ -32,6 +32,10 @@ export interface RiskWeek {
   /** UCDP and ACLED do not cover this week yet. */
   provisional: boolean;
   regions: RiskRegion[];
+  /** Most points each component can add, before parts with no data are left out. */
+  weights: RiskPoints;
+  /** Fitted to the next four weeks' deaths (backend/app/risk_model.py), not hand-set. */
+  weights_fitted: boolean;
 }
 
 export interface RiskPoint {
