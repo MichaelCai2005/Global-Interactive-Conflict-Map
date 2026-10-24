@@ -66,6 +66,9 @@ function node(id: number, kind: Board["nodes"][number]["kind"], label: string, s
     status,
     created_by: "rule" as const,
     attributes,
+    board_x: null,
+    board_y: null,
+    image_url: null,
   };
 }
 
@@ -90,11 +93,12 @@ function mockApi() {
 function renderPanel(boardId: number | null, overrides = {}) {
   const props = {
     boardId,
-    selectedNodeId: null,
+    selection: null,
     mapCenter: { lon: 0, lat: 0 },
     onOpen: vi.fn(),
-    onSelectNode: vi.fn(),
+    onSelect: vi.fn(),
     onFocus: vi.fn(),
+    onShowOnMap: vi.fn(),
     onWindow: vi.fn(),
     ...overrides,
   };
@@ -126,7 +130,7 @@ describe("BoardPanel", () => {
     renderPanel(5);
     expect(await screen.findByText("The article names Testville")).toBeTruthy();
     expect(screen.getByText("“Malian troops clashed near Testville.”")).toBeTruthy();
-    const reasons = screen.getAllByText(/Testville/, { selector: ".board-link p" }).map((p) => p.textContent);
+    const reasons = screen.getAllByText(/Testville/, { selector: ".board-link .link-reason" }).map((p) => p.textContent);
     expect(reasons[0]).toBe("The article names Testville");
     expect(screen.getByText("To review (2)")).toBeTruthy();
   });
@@ -134,31 +138,64 @@ describe("BoardPanel", () => {
   it("accepts links one at a time or all strong ones together", async () => {
     const calls = mockApi();
     renderPanel(5);
-    await userEvent.click(await screen.findByRole("button", { name: "Accept the 2 links at 80% or more" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Keep the 2 links at 80% or more" }));
     const review = calls.find((c) => c.url.endsWith("/boards/5/review"))!;
     expect(JSON.parse(String(review.init?.body))).toEqual({ status: "accepted", link_ids: [10, 11] });
   });
 
-  it("links the globe to the board, accepted items by default", async () => {
-    mockApi();
-    renderPanel(5);
-    const open = await screen.findByRole("link", { name: "Open in 3D globe" });
-    expect(open.getAttribute("href")).toBe("http://localhost:4173/?welcome=0&board=5");
-    await userEvent.click(screen.getByRole("button", { name: "Everything not rejected" }));
-    expect(open.getAttribute("href")).toBe("http://localhost:4173/?welcome=0&board=5&include=all");
-    expect(screen.getByRole("link", { name: "Download for globe" }).getAttribute("href")).toBe(
-      "/api/boards/5/bundle?include=all",
-    );
-  });
-
-  it("flies to a node when its name is clicked", async () => {
+  it("selects and brings a card into view when its name is clicked", async () => {
     mockApi();
     const props = renderPanel(5);
-    // The node list's button, not the link card's end with the same name.
+    // The card list's button, not the link card's end with the same name.
     const buttons = await screen.findAllByRole("button", { name: /^Battle in Testville/ });
     await userEvent.click(buttons.find((b) => b.classList.contains("node-label"))!);
-    expect(props.onFocus).toHaveBeenCalledWith(-4.2, 14.5);
-    expect(props.onSelectNode).toHaveBeenCalledWith(3);
+    expect(props.onFocus).toHaveBeenCalledWith(expect.objectContaining({ id: 3 }));
+    expect(props.onSelect).toHaveBeenCalledWith({ type: "node", id: 3 });
+  });
+
+  it("shows the selected card with its source, picture and connections", async () => {
+    mockApi();
+    const withSource = {
+      ...BOARD,
+      nodes: BOARD.nodes.map((n) =>
+        n.id === 3 ? { ...n, source_url: "https://wire.example/story", image_url: "/boards/images/7" } : n,
+      ),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(withSource), { status: 200, headers: { "Content-Type": "application/json" } })),
+    );
+    const props = renderPanel(5, { selection: { type: "node", id: 3 } });
+    const open = await screen.findByRole("link", { name: "Open wire.example ↗" });
+    expect(open.getAttribute("href")).toBe("https://wire.example/story");
+    expect(open.getAttribute("target")).toBe("_blank");
+    expect(screen.getByRole("img", { name: "Battle in Testville" }).getAttribute("src")).toBe("/api/boards/images/7");
+    await userEvent.click(screen.getByRole("button", { name: "Testville" }));
+    expect(props.onSelect).toHaveBeenCalledWith({ type: "node", id: 2 });
+  });
+
+  it("labels a connection you drew", async () => {
+    const own = {
+      ...BOARD,
+      links: [{ ...BOARD.links[0]!, id: 12, rule: "user", reason: "", status: "accepted" as const, created_by: "user" as const }],
+    };
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return new Response(JSON.stringify(url.includes("/links/") ? own.links[0] : own), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    renderPanel(5, { selection: { type: "link", id: 12 } });
+    const input = await screen.findByRole("textbox", { name: "What connects them" });
+    await userEvent.type(input, "same commander{Enter}");
+    const patch = calls.find((c) => c.init?.method === "PATCH")!;
+    expect(patch.url).toBe("/api/boards/5/links/12");
+    expect(JSON.parse(String(patch.init?.body))).toEqual({ reason: "same commander" });
   });
 
   it("knows the window a story covers", () => {

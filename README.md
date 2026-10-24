@@ -209,7 +209,13 @@ ruff format --check . && ruff check . && pytest
 ```
 
 To put the map online (hosted database, API and frontend, kept current nightly, with
-ACLED left out as its license requires), see [docs/hosting.md](docs/hosting.md).
+ACLED left out as its license requires), see [docs/hosting.md](docs/hosting.md). The root
+`Dockerfile` and `render.yaml` deploy the whole site as one service.
+
+Visitors can browse without an account. Signing up (email and password) lets each person
+keep their own watchlist, tasks, boards and saved searches: map views to reopen, and the
+topics they've searched (the **Saved** tab). On a local install with no `ADMIN_TOKEN`,
+everything works without signing in, in one shared workspace.
 
 ## Map dashboard
 

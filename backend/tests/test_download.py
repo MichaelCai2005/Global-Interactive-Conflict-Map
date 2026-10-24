@@ -1,4 +1,5 @@
 import csv
+import urllib.error
 from datetime import date
 
 from app.ingest import acled, download
@@ -48,3 +49,20 @@ def test_acled_download_keeps_old_years_and_refreshes_recent_ones(monkeypatch, t
 
     download.acled_events("e", "p", 2025, 2025, [], tmp_path, today=date(2026, 10, 1))
     assert len(seen) == 1 and "TST100" in (folder / "acled-all-2025.csv").read_text()
+
+
+def test_ucdp_candidate_skips_months_not_posted_yet(monkeypatch, tmp_path):
+    asked = []
+
+    def fetch(url, dest, attempts=4):
+        asked.append(url)
+        if url.endswith(("_0_1.csv", "_0_2.csv")):
+            return dest
+        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+    monkeypatch.setattr(download, "fetch", fetch)
+    paths = download.ucdp_candidate(2026, 2026, tmp_path)
+
+    assert [p.name for p in paths] == ["GEDEvent_v26_0_1.csv", "GEDEvent_v26_0_2.csv"]
+    assert len(asked) == 12
+    assert asked[8] == "https://ucdp.uu.se/downloads/candidateged/GEDEvent_v26_0_9.csv"

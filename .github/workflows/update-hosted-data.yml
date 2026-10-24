@@ -1,6 +1,8 @@
-# Keeps the hosted database current: loads yesterday's GDELT events, rebuilds this month's
-# cell features and the risk scores, and prunes old live observations. Runs nightly and on
-# demand (Actions tab > Update hosted data > Run workflow).
+# Keeps the hosted database current: loads the last three days of GDELT events, rebuilds
+# those months' cell features and the risk scores, and prunes old live observations. Loading
+# a day again changes nothing, so the overlap fills in a night that failed or found no file
+# yet. Runs nightly and on demand (Actions tab > Update hosted data > Run workflow).
+# UCDP's monthly data has its own workflow, update-ucdp.yml.
 #
 # Needs a repository secret HOSTED_DATABASE_URL, the hosted database's direct (not pooled)
 # URL in the form postgresql+psycopg://user:pass@host/db?sslmode=require. Without it every
@@ -15,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       day:
-        description: "GDELT day to load, YYYY-MM-DD (default: yesterday)"
+        description: "Load only this GDELT day, YYYY-MM-DD (default: the last three days)"
         required: false
 
 concurrency:
@@ -54,20 +56,22 @@ jobs:
         env:
           DAY: ${{ inputs.day }}
         run: |
-          day="${DAY:-$(date -u -d yesterday +%F)}"
-          echo "MONTH=${day:0:7}" >> "$GITHUB_ENV"
-          python -m app.ingest download gdelt --start "$day" --out data
+          start="${DAY:-$(date -u -d '3 days ago' +%F)}"
+          end="${DAY:-$(date -u -d yesterday +%F)}"
+          echo "FIRST_MONTH=${start:0:7}" >> "$GITHUB_ENV"
+          echo "LAST_MONTH=${end:0:7}" >> "$GITHUB_ENV"
+          python -m app.ingest download gdelt --start "$start" --end "$end" --out data
           shopt -s nullglob
           files=(data/gdelt/*.zip)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "::warning::GDELT has no file for $day yet"
+            echo "::warning::GDELT has no files for $start to $end yet"
             exit 0
           fi
           python -m app.ingest load gdelt "${files[@]}"
       - name: Rebuild features and risk scores
         if: env.DATABASE_URL != ''
         run: |
-          python -m app.ingest build-features --start "$MONTH"
+          python -m app.ingest build-features --start "$FIRST_MONTH" --end "$LAST_MONTH"
           python -m app.risk build
       - name: Prune old live observations
         if: env.DATABASE_URL != ''
@@ -75,3 +79,8 @@ jobs:
       - name: Check nothing unpublishable arrived
         if: env.DATABASE_URL != ''
         run: python -m app.publish check
+      - name: Report database size
+        if: env.DATABASE_URL != ''
+        # Warns in the run summary past DB_SIZE_WARN_MB (a repository variable), which
+        # defaults to 450 for Neon's 0.5 GB free plan. Raise it on a paid plan.
+        run: python -m app.publish size --warn-mb "${{ vars.DB_SIZE_WARN_MB || 450 }}"

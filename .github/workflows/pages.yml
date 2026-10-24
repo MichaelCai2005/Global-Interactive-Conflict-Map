@@ -1,0 +1,63 @@
+# Publishes the frontend to GitHub Pages, at https://<user>.github.io/<repo>/. Pages only
+# serves files, so the API runs on Render (render.yaml) and the frontend calls it there.
+#
+# Needs, once:
+# - Settings > Pages > Build and deployment > Source: "GitHub Actions".
+# - A repository variable API_URL (Settings > Secrets and variables > Actions > Variables)
+#   holding the API's address, e.g. https://conflict-map-api.onrender.com, with no
+#   trailing slash.
+#
+# Pages deploys only from the default branch, so pushes to other branches are skipped.
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check for the API address
+        if: vars.API_URL == ''
+        run: |
+          echo "::error::Set the repository variable API_URL to the API's address (see docs/hosting.md)."
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Build
+        run: npx vite build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_API_URL: ${{ vars.API_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

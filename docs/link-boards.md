@@ -2,23 +2,25 @@
 
 A link board starts from a news article or a topic. It suggests how the story connects to
 places, armed groups, past and recent conflict events, and recorded military flights and
-fires. Every link says why it exists and where the evidence comes from. An analyst accepts
-or rejects each suggestion and then presents the board as a briefing on a 3D globe,
-gods-eye-view, where it plays through time.
+fires. Every link says why it exists and where the evidence comes from. The board opens as
+a canvas you arrange like a mood board: keep or dismiss suggestions, add notes, pictures,
+links and more articles, and draw your own connections.
 
 ```
-article or topic ─► backend (app/boards)                 ─► dashboard, Boards tab: review
-                    read it: Claude, or the gazetteer        accept / reject, expand, link,
-                    match places and groups to the data      notes, timeline scrubbing
-                    suggest links by rule, with reasons
-                    record live feeds (app/live)          ─► gods-eye-view fork: present
-                    export a Director scene                  one shot per time step,
-                                                             live military flights now
+article or topic ─► backend (app/boards)                 ─► dashboard, Boards tab: the
+                    read it: Claude, or the gazetteer        canvas (cards and lines), the
+                    match places and groups to the data      map, or both side by side;
+                    suggest links by rule, with reasons      the sidebar shows the selected
+                    record live feeds (app/live)             card with its source, picture
+                                                             and connections
 ```
+
+Presenting a board on the gods-eye-view 3D globe is paused for now; its export still works
+(see "Presenting on the globe" below).
 
 ## Running it
 
-Four processes, each in its own terminal:
+Up to three processes, each in its own terminal:
 
 ```bash
 # 1. API (backend/)
@@ -27,17 +29,12 @@ uvicorn app.main:app --port 8000
 # 2. Dashboard (frontend/), Boards tab
 npm run dev                                   # http://localhost:5173
 
-# 3. Military-flight recorder (backend/), keeps a history of the live feed
+# 3. Optional: military-flight recorder (backend/), keeps a history of the live feed
 python -m app.live adsb                       # polls adsb.lol every 2 minutes
-
-# 4. The globe: the gods-eye-view fork, next to this repo (Node 24.14 or newer)
-CONFLICT_MAP_API=http://localhost:8000 npm run dev    # http://localhost:4173
 ```
 
-On the Boards tab, paste an article link, or the article's text for paywalled sites, or
-name a topic. After review, **Open in 3D globe** opens the board in the globe at
-`?board=<id>`. **Download for globe** saves a `.gevbundle.json`. The unmodified upstream
-globe can import that file from Scenes > IMPORT, with no API and no fork.
+On the Boards tab, paste an article link (or the article's text, for paywalled sites),
+name a topic, or start a blank board.
 
 Optional:
 
@@ -50,6 +47,39 @@ Optional:
 - `python -m app.ingest download gdelt --start … --end …` and `load gdelt …` keep recent
   events current. UCDP's last release ends in 2025, and the ACLED download here covers
   2022.
+
+## Working on the board
+
+The main area shows the open board as a canvas. **Board**, **Board + map** and **Map**
+switch between the canvas, both side by side, and the map alone.
+
+- **Cards.** Each place, group, event, article, note, link or picture is a card. Its colour
+  is its kind. Dashed cards are suggestions, with **Keep** and **Dismiss** on them. A card
+  with a source has a link that opens it in a new tab, and ◉ means it is on the map.
+- **Click** a card or line to open it in the sidebar. There you can edit its title and
+  notes, open its source, add or change its picture, pin it to the map, jump to anything
+  it is connected to, or **Find more around this** (expand).
+- **Drag** cards to arrange them; the spot is saved. The first move also saves every
+  other card where it is, so later layouts don't shift them. **Tidy up** lays the whole
+  board out again.
+- **Connect** two cards by dragging the blue dot on a card's edge onto another card, then
+  say what connects them. That label shows on the line. **Connect to…** in the sidebar
+  does the same from a list.
+- **Add** with the toolbar: a note, a picture (upload PNG, JPEG, GIF or WebP up to 5 MB,
+  or paste its link), a link to any page, or another article. An added article is read
+  and linked like the first one, so its places and events join the cards already there.
+  **Double-click** the canvas for a quick note, and **drop** pictures or links onto it.
+- **Find a card** searches titles; Enter jumps to the first match. Turn **Suggestions** off
+  to see only what you kept and added.
+
+Until someone moves them, cards are laid out as a mind map from left to right: the
+articles and your own cards first, then what they name, then the events around those. A
+card with many children gets them as a block of a few columns (`frontend/src/board/layout.ts`).
+
+Uploaded pictures are stored in the database (`board_images`) and served at
+`/boards/images/<id>`, readable by whoever can read their board. SVG is refused, since
+it can carry script. Notes and links need no place on the map; **Pin to map centre** gives
+them one.
 
 ## How a board is built
 
@@ -92,7 +122,11 @@ probability, and nothing is shown on the globe until it is accepted, unless you 
 - **Groups:** their three-year record in the story's region.
 - **Anything with a place:** recorded flights and fires.
 
-## Presenting on the globe
+## Presenting on the globe (paused)
+
+The dashboard no longer links to the globe, but the API still exports to it:
+`/boards/<id>/bundle` and `/boards/<id>/scene.json`. Notes, links and pictures with no
+place on the map are left out of the export.
 
 The export is a gods-eye-view Director scene, version 6. The steps are:
 

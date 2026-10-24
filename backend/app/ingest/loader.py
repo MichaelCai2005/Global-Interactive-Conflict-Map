@@ -143,7 +143,58 @@ def _load_events(session: Session, run: IngestRun, path: Path) -> None:
         inserted = _upsert(session, run.id, events[start : start + BATCH_SIZE])
         run.inserted += inserted
         run.updated += len(events[start : start + BATCH_SIZE]) - inserted
+    if run.source == ucdp.SOURCE:
+        drop_superseded_ucdp(session, run.id, events)
     run.cross_source_links = link_cross_source(session, run.id)
+
+
+def release_years(events: list[NormalizedEvent]) -> list[int]:
+    """The years a UCDP file covers in full, or none if it is a Candidate file.
+
+    A GED release spans decades with events in every month of each year. A monthly
+    Candidate file holds one month plus a few corrections to earlier ones, so it never
+    fills two whole years. The columns are the same, so this is how the two are told apart.
+    """
+    months: dict[int, set[int]] = {}
+    for e in events:
+        months.setdefault(e.event_date.year, set()).add(e.event_date.month)
+    full = sorted(year for year, seen in months.items() if len(seen) == 12)
+    return full if len(full) >= 2 else []
+
+
+def drop_superseded_ucdp(session: Session, run_id: int, events: list[NormalizedEvent]) -> int:
+    """Deletes UCDP events in the years a GED release covers that the release left out.
+
+    Monthly Candidate events are provisional. When the yearly GED release covers their
+    year, UCDP has dropped some of them and recoded others under new ids (271 of the 1,912
+    Candidate events for 2025 are not in GED 26.1), so without this the leftovers would
+    be counted alongside their replacements. Every event in the release now carries this
+    run's id, so whatever in those years still carries an older one is what it left out.
+    """
+    years = release_years(events)
+    if not years:
+        return 0
+    deleted = session.execute(
+        text("""
+            DELETE FROM events
+            WHERE source = :source
+              AND event_date >= make_date(:first, 1, 1)
+              AND event_date < make_date(:last + 1, 1, 1)
+              AND extract(year FROM event_date)::int = ANY(:years)
+              AND ingest_run_id <> :run_id
+        """),
+        {
+            "source": ucdp.SOURCE,
+            "years": years,
+            "first": years[0],
+            "last": years[-1],
+            "run_id": run_id,
+        },
+    ).rowcount
+    log.info(
+        "dropped %d UCDP events the release for %s-%s superseded", deleted, years[0], years[-1]
+    )
+    return deleted
 
 
 def _load_indicators(session: Session, run: IngestRun, path: Path) -> None:

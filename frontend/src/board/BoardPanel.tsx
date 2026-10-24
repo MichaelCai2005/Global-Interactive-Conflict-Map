@@ -1,28 +1,21 @@
 import { useMemo, useState } from "react";
 import { type DateWindow, addDays, formatDate } from "../lib/dates";
 import { plural } from "../lib/format";
-import {
-  type Board,
-  type BoardLink,
-  type BoardNode,
-  type Include,
-  type Status,
-  bundleUrl,
-  globeUrl,
-  useBoard,
-  useBoardMutations,
-  useBoards,
-} from "./api";
+import { type Board, type BoardLink, type BoardNode, type Status, useBoard, useBoardMutations, useBoards } from "./api";
+import type { BoardSelection } from "./BoardCanvas";
+import { ItemDetail } from "./ItemDetail";
 import "./board.css";
 import { KIND_LABELS, RULE_LABELS, nodeColor } from "./style";
 
 interface Props {
   boardId: number | null;
-  selectedNodeId: number | null;
+  selection: BoardSelection;
   mapCenter: { lon: number; lat: number };
   onOpen(boardId: number | null): void;
-  onSelectNode(nodeId: number | null): void;
-  onFocus(lon: number, lat: number): void;
+  onSelect(selection: BoardSelection): void;
+  /** Bring a card into view: on the canvas, and on the map if it has a place. */
+  onFocus(node: BoardNode): void;
+  onShowOnMap(node: BoardNode): void;
   /** Point the timeline at a board's story: its lookback window up to its date. */
   onWindow(window: DateWindow): void;
 }
@@ -53,9 +46,9 @@ function BoardList({ onOpen, onWindow }: Pick<Props, "onOpen" | "onWindow">) {
   return (
     <div className="panel-body board-panel">
       <p className="muted small">
-        Paste a news article or name a topic. The board lists the places, groups and events it
-        connects to, each link with its reason and source. Accept what holds up, then present it
-        on the 3D globe.
+        Start from a news article, a topic or a blank board. The board lays out the places, groups
+        and events the story connects to, each with its reason and source. Arrange it like a mood
+        board: add notes, pictures and links, and draw your own connections.
       </p>
       <NewBoard onCreated={open} />
       <h3 className="section-title">Boards</h3>
@@ -70,7 +63,7 @@ function BoardList({ onOpen, onWindow }: Pick<Props, "onOpen" | "onWindow">) {
             </button>
             <div className="small muted">
               {b.anchor_date ? formatDate(b.anchor_date) : "No date"} · {b.origin} ·{" "}
-              {plural(b.nodes, "item")}, {b.accepted} accepted
+              {plural(b.nodes, "card")}, {b.accepted} kept
             </div>
           </li>
         ))}
@@ -206,22 +199,38 @@ type ReviewFilter = "suggested" | "accepted" | "rejected" | "all";
 
 function BoardView({
   boardId,
-  selectedNodeId,
+  selection,
   mapCenter,
   onOpen,
-  onSelectNode,
+  onSelect,
   onFocus,
+  onShowOnMap,
   onWindow,
 }: Props & { boardId: number }) {
   const { data: board, isLoading, error } = useBoard(boardId);
   const mutations = useBoardMutations(boardId);
   const [filter, setFilter] = useState<ReviewFilter>("suggested");
-  const [include, setInclude] = useState<Include>("accepted");
-  const [linkFrom, setLinkFrom] = useState<number | null>(null);
 
   const nodes = useMemo(() => new Map(board?.nodes.map((n) => [n.id, n]) ?? []), [board]);
   if (error) return <div className="panel-body error">Could not load the board: {error.message}</div>;
   if (isLoading || !board) return <div className="panel-body muted">Loading…</div>;
+
+  if (selection)
+    return (
+      <div className="panel-body board-panel">
+        <button className="ghost small back" onClick={() => onSelect(null)}>
+          ← {board.title}
+        </button>
+        <ItemDetail
+          board={board}
+          selection={selection}
+          mapCenter={mapCenter}
+          onSelect={onSelect}
+          onFocus={onFocus}
+          onShowOnMap={onShowOnMap}
+        />
+      </div>
+    );
 
   const counts = {
     suggested: board.links.filter((k) => k.status === "suggested").length,
@@ -232,12 +241,11 @@ function BoardView({
     .filter((k) => filter === "all" || k.status === filter)
     .sort((a, b) => b.confidence - a.confidence);
   const strong = board.links.filter((k) => k.status === "suggested" && k.confidence >= 0.8);
-  const accepted = board.nodes.filter((n) => n.status === "accepted").length;
-  const setLink = (link: BoardLink, status: Status) => mutations.review.mutate({ status, link_ids: [link.id] });
-  const focus = (node: BoardNode | undefined) => {
-    if (!node || node.latitude === null || node.longitude === null) return;
-    onSelectNode(node.id);
-    onFocus(node.longitude, node.latitude);
+  const shown = board.nodes.filter((n) => n.status !== "rejected").length;
+  const select = (node: BoardNode | undefined) => {
+    if (!node) return;
+    onSelect({ type: "node", id: node.id });
+    onFocus(node);
   };
 
   return (
@@ -247,48 +255,39 @@ function BoardView({
       </button>
       <h2 className="board-title">{board.title}</h2>
       <p className="small muted">
-        {board.anchor_date ? formatDate(board.anchor_date) : "No date"} · from {board.origin}
+        {board.anchor_date ? formatDate(board.anchor_date) : "No date"} · {plural(shown, "card")}
         {board.extractor ? ` · read by ${board.extractor}` : ""}
         {board.source_url && (
           <>
             {" · "}
             <a href={board.source_url} target="_blank" rel="noopener noreferrer">
-              source
+              source ↗
             </a>
           </>
         )}
       </p>
       {board.notes && <p className="notes small board-notes">{board.notes}</p>}
-
-      <div className="board-present">
-        <div className="segmented small" aria-label="What to present">
-          <button className={include === "accepted" ? "is-on" : ""} onClick={() => setInclude("accepted")}>
-            Accepted ({accepted})
-          </button>
-          <button className={include === "all" ? "is-on" : ""} onClick={() => setInclude("all")}>
-            Everything not rejected
-          </button>
-        </div>
+      <p className="small muted">
+        Click a card to see it here, with its source, pictures and connections. Add notes, pictures, links and more
+        articles from the board's toolbar.
+      </p>
+      {storyWindow(board) && (
         <div className="button-row">
-          <a className="button primary" href={globeUrl(board.id, include)} target="_blank" rel="noopener noreferrer">
-            Open in 3D globe
-          </a>
-          <a className="button" href={bundleUrl(board.id, include)} download>
-            Download for globe
-          </a>
-          {storyWindow(board) && (
-            <button className="ghost" onClick={() => onWindow(storyWindow(board)!)}>
-              Show its time
-            </button>
-          )}
+          <button className="small ghost" onClick={() => onWindow(storyWindow(board)!)}>
+            Show its time on the timeline
+          </button>
         </div>
-      </div>
+      )}
 
-      <h3 className="section-title">Links to review</h3>
+      <h3 className="section-title">Suggestions to review</h3>
       <div className="segmented small" role="tablist" aria-label="Which links">
         {(["suggested", "accepted", "rejected", "all"] as const).map((f) => (
           <button key={f} role="tab" aria-selected={filter === f} className={filter === f ? "is-on" : ""} onClick={() => setFilter(f)}>
-            {f === "suggested" ? `To review (${counts.suggested})` : f === "all" ? "All" : `${f[0]!.toUpperCase()}${f.slice(1)} (${counts[f]})`}
+            {f === "suggested"
+              ? `To review (${counts.suggested})`
+              : f === "all"
+                ? "All"
+                : `${f === "accepted" ? "Kept" : "Dismissed"} (${counts[f]})`}
           </button>
         ))}
       </div>
@@ -298,64 +297,28 @@ function BoardView({
           disabled={mutations.review.isPending}
           onClick={() => mutations.review.mutate({ status: "accepted", link_ids: strong.map((k) => k.id) })}
         >
-          Accept the {strong.length} links at 80% or more
+          Keep the {strong.length} links at 80% or more
         </button>
       )}
       {links.length === 0 && <p className="empty small">Nothing here.</p>}
       <ul className="cards board-links">
-        {links.map((k) => (
+        {links.slice(0, 40).map((k) => (
           <LinkCard
             key={k.id}
             link={k}
             from={nodes.get(k.from_node_id)}
             to={nodes.get(k.to_node_id)}
             busy={mutations.review.isPending}
-            onStatus={(s) => setLink(k, s)}
-            onFocus={focus}
+            onStatus={(s) => mutations.review.mutate({ status: s, link_ids: [k.id] })}
+            onFocus={select}
+            onOpen={() => onSelect({ type: "link", id: k.id })}
           />
         ))}
       </ul>
+      {links.length > 40 && <p className="small muted">And {links.length - 40} more; keep or dismiss some to see them.</p>}
 
-      <h3 className="section-title">On the board</h3>
-      {linkFrom !== null && (
-        <LinkForm
-          from={nodes.get(linkFrom)!}
-          nodes={board.nodes.filter((n) => n.id !== linkFrom && n.status !== "rejected")}
-          pending={mutations.link.isPending}
-          error={mutations.link.error}
-          onCancel={() => setLinkFrom(null)}
-          onSubmit={(to, reason) =>
-            mutations.link.mutate(
-              { from_node_id: linkFrom, to_node_id: to, reason },
-              { onSuccess: () => setLinkFrom(null) },
-            )
-          }
-        />
-      )}
-      <NodeGroups
-        board={board}
-        selectedNodeId={selectedNodeId}
-        expanding={mutations.expand.isPending ? mutations.expand.variables : null}
-        onFocus={focus}
-        onExpand={(n) => mutations.expand.mutate(n.id)}
-        onStatus={(n, status) => mutations.review.mutate({ status, node_ids: [n.id] })}
-        onLink={(n) => setLinkFrom(n.id)}
-      />
-      {mutations.expand.error && <p className="error small">{mutations.expand.error.message}</p>}
-      <NoteForm
-        center={mapCenter}
-        anchor={board.anchor_date}
-        pending={mutations.note.isPending}
-        onSubmit={(label, detail) =>
-          mutations.note.mutate({
-            label,
-            detail,
-            latitude: mapCenter.lat,
-            longitude: mapCenter.lon,
-            time_start: board.anchor_date ? `${board.anchor_date}T00:00:00Z` : undefined,
-          })
-        }
-      />
+      <h3 className="section-title">All cards</h3>
+      <NodeGroups board={board} onOpen={select} />
       <button
         className="ghost small danger"
         onClick={() => {
@@ -376,6 +339,7 @@ function LinkCard({
   busy,
   onStatus,
   onFocus,
+  onOpen,
 }: {
   link: BoardLink;
   from: BoardNode | undefined;
@@ -383,6 +347,7 @@ function LinkCard({
   busy: boolean;
   onStatus(status: Status): void;
   onFocus(node: BoardNode | undefined): void;
+  onOpen(): void;
 }) {
   const quote = typeof link.evidence.quote === "string" ? link.evidence.quote : null;
   return (
@@ -407,14 +372,16 @@ function LinkCard({
           {to?.label}
         </button>
       </div>
-      <p className="small">{link.reason}</p>
+      <button className="link-reason small" onClick={onOpen}>
+        {link.reason || "Your connection"}
+      </button>
       {quote && <blockquote className="small muted">“{quote}”</blockquote>}
       <div className="card-actions">
         <button className="small" disabled={busy || link.status === "accepted"} onClick={() => onStatus("accepted")}>
-          Accept
+          Keep
         </button>
         <button className="small ghost" disabled={busy || link.status === "rejected"} onClick={() => onStatus("rejected")}>
-          Reject
+          Dismiss
         </button>
         <span className="small muted">by {link.created_by}</span>
       </div>
@@ -422,35 +389,19 @@ function LinkCard({
   );
 }
 
-function NodeGroups({
-  board,
-  selectedNodeId,
-  expanding,
-  onFocus,
-  onExpand,
-  onStatus,
-  onLink,
-}: {
-  board: Board;
-  selectedNodeId: number | null;
-  expanding: number | null | undefined;
-  onFocus(node: BoardNode): void;
-  onExpand(node: BoardNode): void;
-  onStatus(node: BoardNode, status: Status): void;
-  onLink(node: BoardNode): void;
-}) {
+function NodeGroups({ board, onOpen }: { board: Board; onOpen(node: BoardNode): void }) {
   const groups = new Map<string, BoardNode[]>();
   for (const n of board.nodes) {
     if (n.status === "rejected") continue;
     groups.set(n.kind, [...(groups.get(n.kind) ?? []), n]);
   }
-  const order = ["article", "claim", "place", "actor", "event", "flight", "fire", "vessel", "note"];
+  const order = ["article", "link", "note", "claim", "place", "actor", "event", "flight", "fire", "vessel"];
   return (
     <div className="board-nodes">
       {order
         .filter((kind) => groups.has(kind))
         .map((kind) => (
-          <details key={kind} open={kind !== "event" || groups.get(kind)!.length <= 12}>
+          <details key={kind} open={groups.get(kind)!.length <= 12}>
             <summary>
               {KIND_LABELS[kind]} ({groups.get(kind)!.length})
             </summary>
@@ -459,145 +410,22 @@ function NodeGroups({
                 .get(kind)!
                 .sort((a, b) => (b.time_start ?? "").localeCompare(a.time_start ?? ""))
                 .map((n) => (
-                  <li key={n.id} className={`node-row${n.id === selectedNodeId ? " is-selected" : ""}`}>
-                    <button className="node-label" onClick={() => onFocus(n)} title={n.detail}>
+                  <li key={n.id} className={`node-row is-${n.status}`}>
+                    <button className="node-label" onClick={() => onOpen(n)} title={n.detail}>
                       <span className="dot" style={{ background: nodeColor(n) }} />
                       <span>{n.label}</span>
                       {n.time_start && <span className="muted small"> · {formatDate(n.time_start.slice(0, 10))}</span>}
                     </button>
-                    <span className="node-actions">
-                      {n.status === "suggested" && (
-                        <button className="small ghost" title="Accept" onClick={() => onStatus(n, "accepted")}>
-                          ✓
-                        </button>
-                      )}
-                      <button className="small ghost" title="Reject" onClick={() => onStatus(n, "rejected")}>
-                        ✕
-                      </button>
-                      <button className="small ghost" title="Link this to another item" onClick={() => onLink(n)}>
-                        Link
-                      </button>
-                      {n.kind !== "article" && (
-                        <button
-                          className="small ghost"
-                          title="Suggest more connections around this"
-                          disabled={expanding === n.id}
-                          onClick={() => onExpand(n)}
-                        >
-                          {expanding === n.id ? "…" : "Expand"}
-                        </button>
-                      )}
-                    </span>
+                    {n.source_url && (
+                      <a className="small" href={n.source_url} target="_blank" rel="noopener noreferrer" title="Open the source in a new tab">
+                        ↗
+                      </a>
+                    )}
                   </li>
                 ))}
             </ul>
           </details>
         ))}
     </div>
-  );
-}
-
-function LinkForm({
-  from,
-  nodes,
-  pending,
-  error,
-  onCancel,
-  onSubmit,
-}: {
-  from: BoardNode;
-  nodes: BoardNode[];
-  pending: boolean;
-  error: Error | null;
-  onCancel(): void;
-  onSubmit(to: number, reason: string): void;
-}) {
-  const [to, setTo] = useState<number | "">("");
-  const [reason, setReason] = useState("");
-  return (
-    <form
-      className="card board-link-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (to !== "" && reason.trim()) onSubmit(to, reason.trim());
-      }}
-    >
-      <div className="small">
-        Link <strong>{from.label}</strong> to
-      </div>
-      <select aria-label="Item to link to" value={to} onChange={(e) => setTo(e.target.value ? Number(e.target.value) : "")}>
-        <option value="">Choose an item…</option>
-        {nodes.map((n) => (
-          <option key={n.id} value={n.id}>
-            {KIND_LABELS[n.kind]}: {n.label}
-          </option>
-        ))}
-      </select>
-      <input
-        aria-label="Why they are connected"
-        placeholder="Why are they connected? (shown on the globe)"
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-      />
-      <div className="button-row">
-        <button type="submit" disabled={pending || to === "" || !reason.trim()}>
-          Add link
-        </button>
-        <button type="button" className="ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-      {error && <p className="error small">{error.message}</p>}
-    </form>
-  );
-}
-
-function NoteForm({
-  center,
-  anchor,
-  pending,
-  onSubmit,
-}: {
-  center: { lon: number; lat: number };
-  anchor: string | null;
-  pending: boolean;
-  onSubmit(label: string, detail: string): void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [label, setLabel] = useState("");
-  const [detail, setDetail] = useState("");
-  if (!open)
-    return (
-      <button className="small" onClick={() => setOpen(true)}>
-        + Note at the map's centre
-      </button>
-    );
-  return (
-    <form
-      className="card"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!label.trim()) return;
-        onSubmit(label.trim(), detail.trim());
-        setLabel("");
-        setDetail("");
-        setOpen(false);
-      }}
-    >
-      <div className="small muted">
-        At {center.lat.toFixed(3)}, {center.lon.toFixed(3)}
-        {anchor ? `, dated ${formatDate(anchor)}` : ""}. Move the map to place it.
-      </div>
-      <input autoFocus aria-label="Note title" placeholder="What is here?" value={label} onChange={(e) => setLabel(e.target.value)} />
-      <textarea aria-label="Note details" rows={3} placeholder="Details and source" value={detail} onChange={(e) => setDetail(e.target.value)} />
-      <div className="button-row">
-        <button type="submit" disabled={pending || !label.trim()}>
-          Add note
-        </button>
-        <button type="button" className="ghost" onClick={() => setOpen(false)}>
-          Cancel
-        </button>
-      </div>
-    </form>
   );
 }

@@ -405,7 +405,9 @@ code {
   border: none;
   border-radius: 0;
   background: transparent;
-  padding: 10px;
+  /* Six tabs share the sidebar, so keep the sides tight. */
+  padding: 10px 4px;
+  white-space: nowrap;
   color: var(--muted);
   border-bottom: 2px solid transparent;
 }
@@ -1160,5 +1162,115 @@ code {
 
   .window-label {
     min-width: 0;
+  }
+}
+
+/* Accounts: the topbar menu, the sign-in dialog and the Saved tab. */
+.account {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.account-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  background: transparent;
+}
+
+.avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-popover {
+  left: auto;
+  right: 0;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account-popover .ghost {
+  text-align: left;
+}
+
+.account-email {
+  overflow-wrap: anywhere;
+  margin-bottom: 4px;
+}
+
+.account-delete {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-dialog {
+  width: min(400px, 100%);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ink-2);
+}
+
+.auth-form input {
+  padding: 8px 10px;
+}
+
+.auth-form button[type="submit"] {
+  padding: 8px 10px;
+}
+
+.auth-switch {
+  margin-top: 14px;
+}
+
+.sign-in-prompt p {
+  margin-bottom: 8px;
+}
+
+.sign-in-prompt .button-row {
+  justify-content: center;
+}
+
+.panel-body .section-title {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+}
+
+@media (max-width: 640px) {
+  .account-name {
+    display: none;
   }
 }

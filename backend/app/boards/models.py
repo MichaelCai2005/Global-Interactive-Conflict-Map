@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -59,6 +60,11 @@ class Board(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Whose board it is (app.auth). Boards without one are shared: anyone may read them,
+    # and only the shared workspace (a local install, or the admin token) may change them.
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
 
     nodes: Mapped[list["BoardNode"]] = relationship(
         back_populates="board", cascade="all, delete-orphan", order_by="BoardNode.id"
@@ -94,6 +100,11 @@ class BoardNode(Base):
     status: Mapped[str] = mapped_column(String(16), default="suggested")
     created_by: Mapped[str] = mapped_column(String(16))
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Where the card sits on the board canvas, once someone has moved it (migration 0008).
+    board_x: Mapped[float | None] = mapped_column(Float)
+    board_y: Mapped[float | None] = mapped_column(Float)
+    # A picture on the card: a public link, or /boards/images/<id> for an uploaded one.
+    image_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     board: Mapped[Board] = relationship(back_populates="nodes")
@@ -120,3 +131,16 @@ class BoardLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     board: Mapped[Board] = relationship(back_populates="links")
+
+
+class BoardImage(Base):
+    """A picture uploaded to a board, served at /boards/images/<id>."""
+
+    __tablename__ = "board_images"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    board_id: Mapped[int] = mapped_column(Integer, ForeignKey("boards.id", ondelete="CASCADE"))
+    content_type: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -3,7 +3,34 @@ import type { DateWindow } from "../lib/dates";
 import { bboxToString } from "../lib/geo";
 import type { Bbox } from "./types";
 
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
+export const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
+
+// The sign-in token, for when the API is on another site (the frontend on GitHub Pages):
+// browsers don't send cookies across sites, so it goes in the Authorization header. On one
+// origin the httpOnly cookie does the same job and this stays empty.
+const TOKEN_KEY = "cm_token";
+
+export function sessionToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage is blocked (a private window); the sign-in lasts until the page closes.
+  }
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = sessionToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export class ApiError extends Error {
   constructor(
@@ -30,7 +57,11 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
   const { json, ...rest } = init ?? {};
   const response = await fetch(`${BASE}${path}`, {
     ...rest,
-    headers: json === undefined ? rest.headers : { "Content-Type": "application/json", ...rest.headers },
+    headers: {
+      ...authHeaders(),
+      ...(json === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(rest.headers as Record<string, string> | undefined),
+    },
     body: json === undefined ? rest.body : JSON.stringify(json),
   });
   if (!response.ok) {

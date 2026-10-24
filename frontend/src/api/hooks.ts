@@ -121,8 +121,8 @@ export function useWatchlistMutations() {
   };
 }
 
-export function useTasks() {
-  return useQuery({ queryKey: ["tasks"], queryFn: () => request<Task[]>("/tasks") });
+export function useTasks(enabled = true) {
+  return useQuery({ queryKey: ["tasks"], queryFn: () => request<Task[]>("/tasks"), enabled });
 }
 
 export function useTaskMutations() {

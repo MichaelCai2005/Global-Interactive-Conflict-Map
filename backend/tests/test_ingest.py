@@ -147,3 +147,45 @@ def test_acled_links_under_ucdp_and_above_gdelt(session, tmp_path):
     # With no UCDP event nearby, the GDELT report attaches to the ACLED one.
     assert gdelt_run.cross_source_links == 1
     assert events["1000000001"].duplicate_of_id == events["TST200"].id
+
+
+def _release(years, skip=()):
+    """A GED-style file with one event in every month of each year, ids by year and month."""
+    return ucdp_csv(
+        [
+            ucdp_row(id=f"{y}{m:02d}", date_start=f"{y}-{m:02d}-15", date_end=f"{y}-{m:02d}-15")
+            for y in years
+            for m in range(1, 13)
+            if f"{y}{m:02d}" not in skip
+        ]
+    )
+
+
+def test_ged_release_drops_the_candidate_events_it_left_out(session, tmp_path):
+    candidate = ucdp_csv(
+        [
+            ucdp_row(id="202403", date_start="2024-03-15", date_end="2024-03-15", best="9"),
+            ucdp_row(id="777", date_start="2024-03-20", date_end="2024-03-20"),  # recoded later
+            ucdp_row(id="888", date_start="2025-01-10", date_end="2025-01-10"),  # not covered yet
+        ]
+    )
+    ingest_file(session, "ucdp", write(tmp_path, "GEDEvent_v24_0_3.csv", candidate))
+
+    ingest_file(session, "ucdp", write(tmp_path, "ged241.csv", _release([2023, 2024])))
+
+    keys = set(session.scalars(select(Event.dedupe_key)))
+    assert "777" not in keys and "888" in keys
+    assert len(keys) == 25
+    revised = session.scalar(select(Event).where(Event.dedupe_key == "202403"))
+    assert revised.fatalities_best == 5
+
+
+def test_candidate_files_never_drop_events(session, tmp_path):
+    ingest_file(session, "ucdp", write(tmp_path, "ged.csv", _release([2023, 2024])))
+    # One month plus a correction to an earlier one, as a Candidate file ships.
+    ingest_file(
+        session,
+        "ucdp",
+        write(tmp_path, "c.csv", _release([2024], skip=[f"2024{m:02d}" for m in range(1, 11)])),
+    )
+    assert len(session.scalars(select(Event.id)).all()) == 24

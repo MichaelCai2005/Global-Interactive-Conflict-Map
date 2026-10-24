@@ -3,6 +3,7 @@
 python -m app.publish copy --target "postgresql+psycopg://user:pass@host/db?sslmode=require"
 python -m app.publish copy --target ... --since 2010-01-01 --without gdelt
 python -m app.publish check --url "postgresql+psycopg://..."
+python -m app.publish size --warn-mb 450
 
 The copy leaves out what a public site must not show. ACLED's license forbids publishing
 its events, so ACLED events, links to them and board nodes built on them stay behind. An
@@ -56,11 +57,14 @@ TABLES = (
     "boards",
     "board_nodes",
     "board_links",
+    "board_images",
 )
 
 # What each copied table sends: the FROM clause and, per column, an expression to send
 # instead of the column itself. Temporary tables kept_runs, kept_events and kept_nodes
-# (built in _choose_rows) hold the ids that survive the filters.
+# (built in _choose_rows) hold the ids that survive the filters. Only shared rows (no
+# user_id) go: people's own boards, watchlists and tasks stay where they were made, and
+# accounts are never copied.
 COPIES: dict[str, tuple[str, dict[str, str]]] = {
     "ingest_runs": ("ingest_runs t JOIN kept_runs k ON k.id = t.id", {}),
     "events": (
@@ -75,7 +79,7 @@ COPIES: dict[str, tuple[str, dict[str, str]]] = {
     ),
     "country_indicators": ("country_indicators t JOIN kept_runs k ON k.id = t.ingest_run_id", {}),
     "observations": ("observations t", {}),
-    "boards": ("boards t", {}),
+    "boards": ("boards t WHERE t.user_id IS NULL", {}),
     "board_nodes": (
         "board_nodes t JOIN kept_nodes k ON k.id = t.id"
         " LEFT JOIN kept_events e ON e.id = t.event_id",
@@ -86,11 +90,15 @@ COPIES: dict[str, tuple[str, dict[str, str]]] = {
         " JOIN kept_nodes b ON b.id = t.to_node_id",
         {},
     ),
+    "board_images": (
+        "board_images t JOIN boards b ON b.id = t.board_id WHERE b.user_id IS NULL",
+        {},
+    ),
 }
 WORKSPACE_COPIES: dict[str, tuple[str, dict[str, str]]] = {
-    "watch_items": ("watch_items t", {}),
+    "watch_items": ("watch_items t WHERE t.user_id IS NULL", {}),
     "analyst_tasks": (
-        "analyst_tasks t LEFT JOIN kept_events e ON e.id = t.event_id",
+        "analyst_tasks t LEFT JOIN kept_events e ON e.id = t.event_id WHERE t.user_id IS NULL",
         {"event_id": "e.id"},
     ),
 }
@@ -162,6 +170,7 @@ def _choose_rows(src: psycopg.Connection, since: date | None, without: Sequence[
     src.execute("CREATE TEMP TABLE kept_nodes (id bigint PRIMARY KEY) ON COMMIT DROP")
     src.execute(
         "INSERT INTO kept_nodes SELECT n.id FROM board_nodes n"
+        " JOIN boards b ON b.id = n.board_id AND b.user_id IS NULL"
         " LEFT JOIN events e ON e.id = n.event_id"
         " WHERE coalesce(e.source, '') <> ALL(%s)"
         " AND NOT coalesce(n.source_name, '') ILIKE ANY(%s)",
@@ -236,6 +245,14 @@ def copy_database(
                 f"schema mismatch: source is at {_revision(src)}, target at {_revision(dst)};"
                 " run `alembic upgrade head` on the source first"
             )
+        # A copy replaces every board, watchlist and task on the target, so once people
+        # keep their own there it must not run: update the hosted data in place instead
+        # (app.ingest against it, as the nightly workflow does).
+        if dst.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+            raise SystemExit(
+                "the target has user accounts, and copying would wipe their boards,"
+                " watchlists and tasks; load new data into it in place (docs/hosting.md)"
+            )
         if dst.execute("SELECT 1 FROM events LIMIT 1").fetchone() and not replace:
             raise SystemExit("the target already has events; pass --replace to overwrite it")
         # One snapshot of the source, so rows loaded during the copy don't half arrive. The
@@ -277,6 +294,16 @@ def copy_database(
         engine.dispose()
 
 
+def database_size(conn: Connection) -> tuple[int, list[tuple[str, int]]]:
+    """The database's size in bytes and its largest tables, indexes included."""
+    total = conn.exec_driver_sql("SELECT pg_database_size(current_database())").scalar()
+    tables = conn.exec_driver_sql("""
+        SELECT relname, pg_total_relation_size(relid) FROM pg_catalog.pg_statio_user_tables
+        ORDER BY 2 DESC LIMIT 5
+    """).all()
+    return total, [(name, size) for name, size in tables]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.publish")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -304,8 +331,28 @@ def main(argv: list[str] | None = None) -> int:
     check = commands.add_parser("check", help="list data a public deployment must not show")
     check.add_argument("--url", help="database to check (default: DATABASE_URL)")
 
+    size = commands.add_parser("size", help="report how much disk a database takes")
+    size.add_argument("--url", help="database to measure (default: DATABASE_URL)")
+    size.add_argument("--warn-mb", type=int, help="warn when the database is larger than this")
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    if args.command == "size":
+        engine = create_engine(args.url or get_settings().database_url)
+        with engine.connect() as conn:
+            total, tables = database_size(conn)
+        engine.dispose()
+        mb = total / 2**20
+        log.info("database: %.0f MB", mb)
+        for name, table_size in tables:
+            log.info("  %s: %.0f MB", name, table_size / 2**20)
+        if args.warn_mb and mb > args.warn_mb:
+            message = f"the database takes {mb:.0f} MB, over the {args.warn_mb} MB warning line"
+            log.warning(message)
+            if os.environ.get("GITHUB_ACTIONS"):
+                print(f"::warning::{message}")
+        return 0
 
     if args.command == "check":
         engine = create_engine(args.url or get_settings().database_url)

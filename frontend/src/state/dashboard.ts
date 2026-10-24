@@ -2,7 +2,7 @@ import type { Bbox } from "../api/types";
 import { type DateWindow, addDays } from "../lib/dates";
 
 export type Violence = "all" | "violent" | "signals";
-export type Panel = "overview" | "risk" | "watchlist" | "tasks" | "board";
+export type Panel = "overview" | "risk" | "watchlist" | "tasks" | "board" | "saved";
 
 export interface Filters {
   sources: string[];
@@ -73,7 +73,10 @@ export function initialState(search: string): DashboardState {
     viewBbox: null,
     followView: q.get("follow") !== "0",
     selectedEventId: Number.isInteger(event) && event > 0 ? event : null,
-    panel: panel === "risk" || panel === "watchlist" || panel === "tasks" || panel === "board" ? panel : "overview",
+    panel:
+      panel === "risk" || panel === "watchlist" || panel === "tasks" || panel === "board" || panel === "saved"
+        ? panel
+        : "overview",
     boardId: Number.isInteger(board) && board > 0 ? board : null,
     playing: false,
     speed: 1,
@@ -116,7 +119,9 @@ export type Action =
   | { type: "board"; boardId: number | null }
   | { type: "play"; playing: boolean }
   | { type: "speed"; speed: number }
-  | { type: "story"; range: DateWindow; windowDays: number };
+  | { type: "story"; range: DateWindow; windowDays: number }
+  /** Opens a saved view: its address-bar query, as a shared link would. */
+  | { type: "restore"; search: string };
 
 export function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
@@ -142,6 +147,8 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, playing: action.playing };
     case "speed":
       return { ...state, speed: action.speed };
+    case "restore":
+      return { ...initialState(action.search), viewBbox: state.viewBbox };
     case "story":
       return {
         ...state,

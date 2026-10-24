@@ -1,6 +1,7 @@
 """Link boards: draft one from an article or topic, review it, export it to the globe."""
 
 import logging
+import uuid
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
@@ -8,6 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.searches import record_topic
+from app.auth import Owner, Viewer, Workspace
 from app.boards import draft, export, rules, topic
 from app.boards.articles import Article, ArticleError, fetch_article
 from app.boards.extract import ExtractionError, GazetteerExtractor, get_extractor
@@ -35,14 +38,25 @@ Db = Annotated[Session, Depends(get_db)]
 Include = Literal["accepted", "all"]
 
 
-def _board(db: Session, board_id: int) -> Board:
+def can_read(board: Board, viewer: Workspace | None) -> bool:
+    """Shared boards (no owner) are for everyone; a person's own only for them."""
+    return board.user_id is None or (viewer is not None and viewer.owns(board))
+
+
+def _board(db: Session, board_id: int, *, owner: Workspace | None, write: bool = True) -> Board:
+    """The board, if `owner` may change it (or, with write=False, see it). Someone else's
+    board is a 404, so ids don't reveal what others keep; a shared one is read-only."""
     board = db.scalar(
         select(Board)
         .where(Board.id == board_id)
         .options(selectinload(Board.nodes), selectinload(Board.links))
     )
-    if board is None:
+    if board is None or not can_read(board, owner):
         raise HTTPException(404, "Board not found")
+    if write and (owner is None or not owner.owns(board)):
+        raise HTTPException(
+            403, "This is a shared board; copy what you need to a board of your own"
+        )
     return board
 
 
@@ -51,7 +65,7 @@ def _touch(board: Board) -> None:
 
 
 @router.get("/boards", response_model=list[BoardSummary])
-def list_boards(db: Db):
+def list_boards(db: Db, viewer: Viewer):
     nodes = (
         select(
             BoardNode.board_id,
@@ -68,6 +82,11 @@ def list_boards(db: Db):
         select(Board, nodes.c.n, nodes.c.a, links.c.n)
         .outerjoin(nodes, nodes.c.board_id == Board.id)
         .outerjoin(links, links.c.board_id == Board.id)
+        .where(
+            Board.user_id.is_(None)
+            if viewer is None or viewer.user_id is None
+            else (Board.user_id.is_(None) | (Board.user_id == viewer.user_id))
+        )
         .order_by(Board.updated_at.desc())
     ).all()
     return [
@@ -89,15 +108,21 @@ def list_boards(db: Db):
 
 
 @router.post("/boards", response_model=BoardOut, status_code=201)
-def create_board(body: BoardIn, db: Db):
-    board = Board(title=body.title, origin="manual", anchor_date=body.anchor_date, notes=body.notes)
+def create_board(body: BoardIn, db: Db, owner: Owner):
+    board = Board(
+        title=body.title,
+        origin="manual",
+        anchor_date=body.anchor_date,
+        notes=body.notes,
+        user_id=owner.user_id,
+    )
     db.add(board)
     db.commit()
-    return _board(db, board.id)
+    return _board(db, board.id, owner=owner)
 
 
 @router.post("/boards/draft", response_model=BoardOut, status_code=201)
-def draft_board(body: DraftIn, db: Db):
+def draft_board(body: DraftIn, db: Db, owner: Owner):
     """Read an article and suggest a board: its places, actors, claims and linked events.
 
     Everything but the article starts as a suggestion with a reason, to accept or reject.
@@ -124,6 +149,7 @@ def draft_board(body: DraftIn, db: Db):
         anchor_date=anchor,
         extractor=extractor_name,
         notes=note,
+        user_id=owner.user_id,
     )
     db.add(board)
     db.flush()
@@ -131,7 +157,7 @@ def draft_board(body: DraftIn, db: Db):
         db, board, article, extraction, anchor, draft.RuleSettings(lookback_days=body.lookback_days)
     )
     db.commit()
-    return _board(db, board.id)
+    return _board(db, board.id, owner=owner)
 
 
 def _extract(db: Session, article: Article, anchor: date, kind: str | None):
@@ -152,7 +178,7 @@ def _extract(db: Session, article: Article, anchor: date, kind: str | None):
 
 
 @router.post("/boards/topic", response_model=BoardOut, status_code=201)
-def topic_board(body: TopicIn, db: Db):
+def topic_board(body: TopicIn, db: Db, owner: Owner):
     """Start a board from a topic: recent coverage from GDELT's article search, read and
     linked like a pasted article. When the search is unavailable or finds nothing, the
     board starts from the topic's own words and the events data, and says so."""
@@ -176,35 +202,37 @@ def topic_board(body: TopicIn, db: Db):
         except topic.TopicError as e:
             db.rollback()
             raise HTTPException(404, f"{problem}. {e}" if problem else str(e)) from e
+    board.user_id = owner.user_id
+    record_topic(db, owner, body.model_dump(mode="json"))
     db.commit()
-    return _board(db, board.id)
+    return _board(db, board.id, owner=owner)
 
 
 @router.get("/boards/{board_id}", response_model=BoardOut)
-def get_board(board_id: int, db: Db):
-    return _board(db, board_id)
+def get_board(board_id: int, db: Db, viewer: Viewer):
+    return _board(db, board_id, owner=viewer, write=False)
 
 
 @router.patch("/boards/{board_id}", response_model=BoardOut)
-def update_board(board_id: int, body: BoardPatch, db: Db):
-    board = _board(db, board_id)
+def update_board(board_id: int, body: BoardPatch, db: Db, owner: Owner):
+    board = _board(db, board_id, owner=owner)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(board, field, value)
     _touch(board)
     db.commit()
-    return _board(db, board_id)
+    return _board(db, board_id, owner=owner)
 
 
 @router.delete("/boards/{board_id}", status_code=204)
-def delete_board(board_id: int, db: Db):
-    db.delete(_board(db, board_id))
+def delete_board(board_id: int, db: Db, owner: Owner):
+    db.delete(_board(db, board_id, owner=owner))
     db.commit()
     return Response(status_code=204)
 
 
 @router.post("/boards/{board_id}/nodes", response_model=NodeOut, status_code=201)
-def add_node(board_id: int, body: NodeIn, db: Db):
-    board = _board(db, board_id)
+def add_node(board_id: int, body: NodeIn, db: Db, owner: Owner):
+    board = _board(db, board_id, owner=owner)
     builder = draft.BoardBuilder(db, board)
     if body.event_id is not None:
         rows = rules.events_by_id(db, [body.event_id])
@@ -212,35 +240,40 @@ def add_node(board_id: int, body: NodeIn, db: Db):
             raise HTTPException(404, "Event not found")
         node = builder.event_node(rows[0])
     else:
-        key = f"{body.kind}:user:{len(board.nodes) + 1}:{body.latitude:.4f}:{body.longitude:.4f}"
         node = builder.node(
-            key,
+            f"{body.kind}:user:{uuid.uuid4().hex[:12]}",
             kind=body.kind,
-            label=body.label,
+            label=body.label.strip(),
             detail=body.detail,
             latitude=body.latitude,
             longitude=body.longitude,
-            geo_basis="user",
+            geo_basis="user" if body.latitude is not None else None,
             time_start=body.time_start,
             source_name=body.source_name,
             source_url=body.source_url,
+            image_url=body.image_url,
             created_by="user",
         )
     node.status = "accepted"
     node.created_by = "user"
+    if body.board_x is not None:
+        node.board_x, node.board_y = body.board_x, body.board_y
     _touch(board)
     db.commit()
     return node
 
 
 @router.patch("/boards/{board_id}/nodes/{node_id}", response_model=NodeOut)
-def update_node(board_id: int, node_id: int, body: NodePatch, db: Db):
-    board = _board(db, board_id)
+def update_node(board_id: int, node_id: int, body: NodePatch, db: Db, owner: Owner):
+    board = _board(db, board_id, owner=owner)
     node = next((n for n in board.nodes if n.id == node_id), None)
     if node is None:
         raise HTTPException(404, "Node not found")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(node, field, value)
+    if "latitude" in body.model_fields_set:
+        node.geo_basis = "user" if node.latitude is not None else None
+        node.geometry = None
     if body.status == "rejected":
         # A rejected node takes its links with it; an accepted link needs both ends.
         for k in board.links:
@@ -252,10 +285,10 @@ def update_node(board_id: int, node_id: int, body: NodePatch, db: Db):
 
 
 @router.post("/boards/{board_id}/nodes/{node_id}/expand", response_model=BoardOut)
-def expand(board_id: int, node_id: int, db: Db):
+def expand(board_id: int, node_id: int, db: Db, owner: Owner):
     """Suggest more connections around one node: nearby events, its actors, other sources'
     reports of the same incident, recorded flights and fires."""
-    board = _board(db, board_id)
+    board = _board(db, board_id, owner=owner)
     node = next((n for n in board.nodes if n.id == node_id), None)
     if node is None:
         raise HTTPException(404, "Node not found")
@@ -263,12 +296,12 @@ def expand(board_id: int, node_id: int, db: Db):
     _touch(board)
     db.commit()
     db.expire_all()
-    return _board(db, board_id)
+    return _board(db, board_id, owner=owner)
 
 
 @router.post("/boards/{board_id}/links", response_model=LinkOut, status_code=201)
-def add_link(board_id: int, body: LinkIn, db: Db):
-    board = _board(db, board_id)
+def add_link(board_id: int, body: LinkIn, db: Db, owner: Owner):
+    board = _board(db, board_id, owner=owner)
     ids = {n.id for n in board.nodes}
     if body.from_node_id not in ids or body.to_node_id not in ids:
         raise HTTPException(422, "Both ends must be nodes on this board")
@@ -290,7 +323,7 @@ def add_link(board_id: int, body: LinkIn, db: Db):
         from_node_id=body.from_node_id,
         to_node_id=body.to_node_id,
         rule="user",
-        reason=body.reason,
+        reason=body.reason.strip(),
         evidence={},
         confidence=1.0,
         status="accepted",
@@ -303,25 +336,30 @@ def add_link(board_id: int, body: LinkIn, db: Db):
 
 
 @router.patch("/boards/{board_id}/links/{link_id}", response_model=LinkOut)
-def update_link(board_id: int, link_id: int, body: LinkPatch, db: Db):
-    board = _board(db, board_id)
+def update_link(board_id: int, link_id: int, body: LinkPatch, db: Db, owner: Owner):
+    board = _board(db, board_id, owner=owner)
     link = next((k for k in board.links if k.id == link_id), None)
     if link is None:
         raise HTTPException(404, "Link not found")
+    if body.reason is not None:
+        if link.rule != "user":
+            raise HTTPException(422, "Only your own links can be relabelled")
+        link.reason = body.reason.strip()
     if body.status == "accepted":
         # Accepting a link accepts both ends, so it can be shown.
         for n in board.nodes:
             if n.id in (link.from_node_id, link.to_node_id) and n.status == "suggested":
                 n.status = "accepted"
-    link.status = body.status
+    if body.status is not None:
+        link.status = body.status
     _touch(board)
     db.commit()
     return link
 
 
 @router.post("/boards/{board_id}/review", response_model=BoardOut)
-def review(board_id: int, body: ReviewIn, db: Db):
-    board = _board(db, board_id)
+def review(board_id: int, body: ReviewIn, db: Db, owner: Owner):
+    board = _board(db, board_id, owner=owner)
     nodes = {n.id: n for n in board.nodes}
     for node_id in body.node_ids:
         if node_id in nodes:
@@ -339,19 +377,19 @@ def review(board_id: int, body: ReviewIn, db: Db):
             k.status = "rejected"
     _touch(board)
     db.commit()
-    return _board(db, board_id)
+    return _board(db, board_id, owner=owner)
 
 
 # --- Map and globe ------------------------------------------------------------------
 
 
 @router.get("/boards/{board_id}/geojson")
-def board_geojson(board_id: int, db: Db, include: Include = "all"):
+def board_geojson(board_id: int, db: Db, viewer: Viewer, include: Include = "all"):
     """Nodes as points (tracks as lines) and links as straight lines, for the 2D map.
 
     Each feature carries `day` (days since 1970-01-01) so the map can filter by time.
     """
-    board = _board(db, board_id)
+    board = _board(db, board_id, owner=viewer, write=False)
     nodes, links = export.visible(board, include)
     by_id = {n.id: n for n in nodes}
     features = []
@@ -402,9 +440,9 @@ def _day(value: datetime | None) -> int | None:
 
 
 @router.get("/boards/{board_id}/bundle")
-def board_bundle(board_id: int, db: Db, include: Include = "accepted"):
+def board_bundle(board_id: int, db: Db, viewer: Viewer, include: Include = "accepted"):
     """A .gevbundle.json for gods-eye-view's Scenes > IMPORT, packs embedded."""
-    board = _board(db, board_id)
+    board = _board(db, board_id, owner=viewer, write=False)
     try:
         text = export.bundle(board, include)
     except export.ExportError as e:
@@ -421,10 +459,10 @@ def _pack_path(board_id: int, include: str):
 
 
 @router.get("/boards/{board_id}/scene.json")
-def board_scene(board_id: int, db: Db, include: Include = "accepted"):
+def board_scene(board_id: int, db: Db, viewer: Viewer, include: Include = "accepted"):
     """A scene whose packs load live from this API, for a globe that registers the
     `conflict-map` source (docs/gods-eye-view.md). Re-export after editing the board."""
-    board = _board(db, board_id)
+    board = _board(db, board_id, owner=viewer, write=False)
     try:
         project, _ = export.build_scene(
             board, include, adapter="conflict-map", path_for=_pack_path(board_id, include)
@@ -435,9 +473,9 @@ def board_scene(board_id: int, db: Db, include: Include = "accepted"):
 
 
 @router.get("/scene-packs/boards/{board_id}/{include}/{index}.geojson")
-def scene_pack(board_id: int, include: Include, index: int, db: Db):
+def scene_pack(board_id: int, include: Include, index: int, db: Db, viewer: Viewer):
     """One pack of a live scene. The path has no query string: the globe forbids them."""
-    board = _board(db, board_id)
+    board = _board(db, board_id, owner=viewer, write=False)
     try:
         _, files = export.build_scene(
             board, include, adapter="conflict-map", path_for=_pack_path(board_id, include)

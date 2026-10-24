@@ -20,6 +20,10 @@ GDELT_DAILY_URL = "http://data.gdeltproject.org/events/{day:%Y%m%d}.export.CSV.z
 # UCDP names its GED release files by version, e.g. 26.1 -> ged261-csv.zip. Check the
 # current version at https://ucdp.uu.se/downloads/ if this 404s.
 UCDP_GED_URL = "https://ucdp.uu.se/downloads/ged/ged{version}-csv.zip"
+# UCDP Candidate posts one file a month, around the 20th, holding the month before plus a
+# few corrections to earlier months: version 26.0.9 is September 2026. The yearly GED
+# release later replaces them.
+UCDP_CANDIDATE_URL = "https://ucdp.uu.se/downloads/candidateged/GEDEvent_v{yy:02d}_0_{month}.csv"
 # ACLED's API takes an OAuth token from the account's email and password. Its firewall
 # rejects Python's default User-Agent, so every ACLED request names this client.
 ACLED_TOKEN_URL = "https://acleddata.com/oauth/token"
@@ -77,6 +81,21 @@ def ucdp_ged(version: str, out_dir: Path) -> Path:
     compact = version.replace(".", "")
     url = UCDP_GED_URL.format(version=compact)
     return fetch(url, out_dir / "ucdp" / Path(url).name)
+
+
+def ucdp_candidate(start_year: int, end_year: int, out_dir: Path) -> list[Path]:
+    """Fetches every monthly Candidate file posted for these years; months not out yet are skipped."""
+    paths = []
+    for year in range(start_year, end_year + 1):
+        for month in range(1, 13):
+            url = UCDP_CANDIDATE_URL.format(yy=year % 100, month=month)
+            try:
+                paths.append(fetch(url, out_dir / "ucdp" / Path(url).name))
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    raise
+                log.info("no UCDP Candidate file for %s-%02d yet", year, month)
+    return paths
 
 
 def _request_json(request: urllib.request.Request, attempts: int = 4) -> dict | list:

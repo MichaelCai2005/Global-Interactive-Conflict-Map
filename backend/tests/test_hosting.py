@@ -42,13 +42,20 @@ def test_admin_token_guards_every_write(client, settings):
     assert client.post("/watchlist", json=WATCH, headers=bearer).status_code == 201
     header = {"X-Admin-Token": "s3cret"}
     assert client.post("/watchlist", json=WATCH, headers=header).status_code == 201
-    assert len(client.get("/watchlist").json()) == 2
+    # The shared workspace is the token holder's, so reading it takes the token too.
+    assert client.get("/watchlist").status_code == 401
+    assert len(client.get("/watchlist", headers=bearer).json()) == 2
 
 
 def test_public_mode_is_read_only_without_a_token(client, settings):
     settings.public_mode = True
-    assert client.get("/watchlist").status_code == 200
-    refused = client.post("/watchlist", json=WATCH)
+    assert client.get("/events").status_code == 200
+    # Personal data asks the visitor to sign in (tests/test_accounts.py)...
+    assert client.get("/watchlist").status_code == 401
+    assert client.post("/watchlist", json=WATCH).status_code == 401
+    # ...and everything else stays read-only.
+    files = {"file": ("ucdp.csv", b"id\n", "text/csv")}
+    refused = client.post("/ingest/ucdp", files=files)
     assert refused.status_code == 403
     assert refused.json()["detail"] == "this deployment is read-only"
 
@@ -75,6 +82,13 @@ def test_public_api_will_not_start_on_acled_data(session, settings):
 
     settings.public_mode = True
     with pytest.raises(RuntimeError, match="events from acled"), TestClient(app):
+        pass
+
+
+def test_public_api_will_not_start_on_the_development_password(session, settings):
+    # The test database uses conflict/conflict, like docker-compose.yml.
+    settings.public_mode = True
+    with pytest.raises(RuntimeError, match="development password"), TestClient(app):
         pass
 
 
@@ -177,3 +191,32 @@ def test_copy_leaves_acled_behind(session, target_url):
             is None
         )
     target.dispose()
+
+
+def test_copy_leaves_accounts_behind_and_wont_overwrite_them(session, target_url):
+    from app.models import User
+
+    add_event(session, _run(session, "ucdp"), "u1", source="ucdp", latitude=15.0,
+              longitude=-1.0, event_date=date(2024, 3, 1))  # fmt: skip
+    person = User(email="ana@example.org", password_hash="x")
+    session.add(person)
+    session.flush()
+    session.add_all(
+        [
+            Board(title="Shared", origin="manual"),
+            Board(title="Private", origin="manual", user_id=person.id),
+            WatchItem(name="Mine", country="Mali", user_id=person.id),
+        ]
+    )
+    session.commit()
+    copy_database(TEST_DATABASE_URL, target_url, workspace=True)
+    target = create_engine(target_url)
+    with target.begin() as conn:
+        assert conn.execute(text("SELECT title FROM boards")).scalars().all() == ["Shared"]
+        assert conn.execute(text("SELECT count(*) FROM watch_items")).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM users")).scalar() == 0
+        # Once the hosted site has accounts, a copy would wipe their data, so it stops.
+        conn.execute(text("INSERT INTO users (email, password_hash) VALUES ('bo@x.org', 'x')"))
+    target.dispose()
+    with pytest.raises(SystemExit, match="user accounts"):
+        copy_database(TEST_DATABASE_URL, target_url, replace=True)

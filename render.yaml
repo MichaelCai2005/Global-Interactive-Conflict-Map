@@ -1,0 +1,33 @@
+# Render Blueprint: the API, which the frontend on GitHub Pages calls (.github/workflows/
+# pages.yml). On render.com: New > Blueprint, pick this repo, then paste the Neon database
+# URL when asked. See docs/hosting.md.
+#
+# The root Dockerfile builds the API and the frontend into one service instead; point
+# dockerfilePath/dockerContext there to host the whole site on Render without Pages.
+services:
+  - type: web
+    name: conflict-map-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    # Ohio, beside the Neon database (AWS us-east-2).
+    region: ohio
+    # Free sleeps after 15 idle minutes and takes about a minute to wake on the next
+    # visit. "starter" ($7/month) stays awake.
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        # The production branch's direct (not -pooler) URL, as postgresql+psycopg://...
+        sync: false
+      - key: PUBLIC_MODE
+        value: "true"
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: SIGNUPS_OPEN
+        value: "true"
+      # The site allowed to call the API from the browser: the GitHub Pages frontend.
+      # Scheme and host only, no path.
+      - key: CORS_ORIGINS
+        value: https://michaelcai2005.github.io

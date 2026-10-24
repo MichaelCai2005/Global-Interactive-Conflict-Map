@@ -23,7 +23,7 @@ def engine():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "DROP TABLE IF EXISTS board_links, board_nodes, boards, observations, risk_scores, risk_countries, cell_month_features, country_indicators, analyst_tasks, watch_items, rejected_records, event_links, events, ingest_runs, alembic_version CASCADE"
+                "DROP TABLE IF EXISTS saved_searches, user_sessions, users, board_images, board_links, board_nodes, boards, observations, risk_scores, risk_countries, cell_month_features, country_indicators, analyst_tasks, watch_items, rejected_records, event_links, events, ingest_runs, alembic_version CASCADE"
             )
         )
         conn.execute(
@@ -44,7 +44,7 @@ def session(engine):
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE board_links, board_nodes, boards, observations, risk_scores, risk_countries, cell_month_features, country_indicators, analyst_tasks, watch_items, rejected_records, event_links, events, ingest_runs RESTART IDENTITY CASCADE"
+                "TRUNCATE saved_searches, user_sessions, users, board_images, board_links, board_nodes, boards, observations, risk_scores, risk_countries, cell_month_features, country_indicators, analyst_tasks, watch_items, rejected_records, event_links, events, ingest_runs RESTART IDENTITY CASCADE"
             )
         )
     with sessionmaker(bind=engine, expire_on_commit=False)() as session:

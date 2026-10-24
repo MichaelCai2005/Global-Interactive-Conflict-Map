@@ -2,10 +2,12 @@
 
 python -m app.ingest download gdelt --start 2022-02-01 --end 2022-02-28
 python -m app.ingest download ucdp --version 26.1
+python -m app.ingest download ucdp-candidate --start-year 2026
 python -m app.ingest download acled --start-year 2018 --end-year 2024 --country Ukraine
 python -m app.ingest download wdi --start-year 1989 --end-year 2025
 python -m app.ingest download epr
 python -m app.ingest load ucdp data/ucdp/ged261-csv.zip
+python -m app.ingest load ucdp data/ucdp/GEDEvent_v26_0_*.csv
 python -m app.ingest load acled data/acled/*.csv
 python -m app.ingest load gdelt data/gdelt/*.zip
 python -m app.ingest load wdi data/wdi/wdi-1989-2025.csv
@@ -17,7 +19,7 @@ python -m app.ingest build-features --start 2022-01 --end 2022-12
 import argparse
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from app.config import get_settings
@@ -41,11 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     load.add_argument("paths", nargs="+", type=Path)
 
     fetch = commands.add_parser("download", help="download raw source files")
-    fetch.add_argument("source", choices=["acled", "epr", "gdelt", "ucdp", "wdi"])
+    fetch.add_argument("source", choices=["acled", "epr", "gdelt", "ucdp", "ucdp-candidate", "wdi"])
     fetch.add_argument("--start", type=date.fromisoformat, help="GDELT: first day")
     fetch.add_argument("--end", type=date.fromisoformat, help="GDELT: last day")
     fetch.add_argument("--version", default="26.1", help="UCDP GED release, e.g. 26.1")
-    fetch.add_argument("--start-year", type=int, help="ACLED, WDI: first year")
+    fetch.add_argument("--start-year", type=int, help="ACLED, WDI, UCDP Candidate: first year")
     fetch.add_argument("--end-year", type=int, help="ACLED, WDI: last year (default: start year)")
     fetch.add_argument("--epr-version", default="2021", help="EPR Core release year")
     fetch.add_argument(
@@ -70,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "download":
         if args.source == "ucdp":
             download.ucdp_ged(args.version, args.out)
+        elif args.source == "ucdp-candidate":
+            # By default, the year of last month's file and the current one, so January
+            # still picks up December's.
+            today = date.today()
+            start = args.start_year or (today.replace(day=1) - timedelta(days=1)).year
+            download.ucdp_candidate(start, args.end_year or today.year, args.out)
         elif args.source == "epr":
             download.epr_core(args.epr_version, args.out)
         elif args.source == "wdi":

@@ -1,12 +1,15 @@
+# Local development only. A hosted deployment uses Neon and the host's secret store
+# (docs/hosting.md). Set POSTGRES_PASSWORD in a root .env file to change the password;
+# ports bind to this machine only, so nothing on the network can reach the database.
 services:
   db:
     image: postgis/postgis:16-3.4
     environment:
       POSTGRES_USER: conflict
-      POSTGRES_PASSWORD: conflict
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-conflict}
       POSTGRES_DB: conflict
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,9 +20,9 @@ services:
   api:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://conflict:conflict@db:5432/conflict
+      DATABASE_URL: postgresql+psycopg://conflict:${POSTGRES_PASSWORD:-conflict}@db:5432/conflict
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
     depends_on:
