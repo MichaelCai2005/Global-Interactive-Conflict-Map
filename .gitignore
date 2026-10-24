@@ -8,3 +8,7 @@ data/
 # Downloaded datasets stay out, but app/data holds files the package ships.
 !backend/app/data/
 *.egg-info/
+
+# Build leftovers: setuptools (pip install .) and tsc -b.
+build/
+*.tsbuildinfo
