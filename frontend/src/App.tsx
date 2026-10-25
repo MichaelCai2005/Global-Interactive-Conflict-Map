@@ -109,6 +109,10 @@ export function App() {
   const lastSplit = useRef<Layout>({ "split-board": 55, "split-map": 45 });
   useEffect(() => {
     if (boardId === null) return;
+    // The board pane registers with the group after this runs on the render that opens a
+    // board, and setLayout throws on a layout naming a panel the group doesn't have yet.
+    // That first layout comes from the panes' defaultSize instead.
+    if (split.current && !("split-board" in split.current.getLayout())) return;
     split.current?.setLayout(
       view === "board"
         ? { "split-board": 100, "split-map": 0 }
@@ -413,7 +417,13 @@ export function App() {
             )}
             <ResizablePanelGroup id="board-split" orientation="horizontal" groupRef={split} onLayoutChanged={onSplitChanged}>
               {boardId !== null && (
-                <ResizablePanel id="split-board" className="pane" defaultSize="55%" minSize="20%" collapsible>
+                <ResizablePanel
+                  id="split-board"
+                  className="pane"
+                  defaultSize={view === "board" ? "100%" : view === "map" ? "0%" : `${lastSplit.current["split-board"]}%`}
+                  minSize="20%"
+                  collapsible
+                >
                   {openBoard && view !== "map" && (
                     <div className="board-pane">
                       <BoardCanvas ref={canvas} board={openBoard} selection={boardSelection} onSelect={setBoardSelection} />
