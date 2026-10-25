@@ -15,8 +15,9 @@ from sqlalchemy import func, literal_column, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app import headline_model
 from app.config import get_settings
-from app.ingest import acled, download, epr, gdelt, ucdp, vdem, wdi
+from app.ingest import acled, download, epr, gdelt, gdelt_screen, ucdp, vdem, wdi
 from app.ingest.common import IndicatorValue, NormalizedEvent, ParsedIndicatorRow, ParsedRow
 from app.models import CountryIndicator, Event, GdeltId, IngestRun, RejectedRecord
 
@@ -159,6 +160,8 @@ def _load_events(session: Session, run: IngestRun, path: Path) -> None:
         if run.source == gdelt.SOURCE and e.source_event_id.isdigit()
     ]
     events, run.merged_in_file = collapse_duplicates(events)
+    if run.source == gdelt.SOURCE:
+        screen_by_model(events, headline_model.shared())
     _save_rejected(session, run, rejected)
     for start in range(0, len(events), BATCH_SIZE):
         inserted = _upsert(session, run.id, events[start : start + BATCH_SIZE])
@@ -169,6 +172,20 @@ def _load_events(session: Session, run: IngestRun, path: Path) -> None:
     if run.source == ucdp.SOURCE:
         drop_superseded_ucdp(session, run.id, events)
     run.cross_source_links = link_cross_source(session, run.id)
+
+
+def screen_by_model(
+    events: list[NormalizedEvent], model: gdelt_screen.ConflictModel | None
+) -> None:
+    """Screens out the violent GDELT events the rules kept whose headline the model finds
+    unlike armed conflict (app.ingest.gdelt_screen)."""
+    reasons = gdelt_screen.screen_by_model(
+        model,
+        [e.source_url if e.is_violent else None for e in events],
+        [e.screened_out for e in events],
+    )
+    for event, reason in zip(events, reasons, strict=True):
+        event.screened_out = reason
 
 
 def release_years(events: list[NormalizedEvent]) -> list[int]:

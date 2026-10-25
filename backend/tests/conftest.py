@@ -12,6 +12,8 @@ TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+psycopg://conflict:conflict@localhost:5432/conflict_test"
 )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Tests screen GDELT with the word rules, and hand in a model where they test one.
+os.environ["GDELT_HEADLINE_MODEL"] = "false"
 
 from app.db import get_db  # noqa: E402
 from app.main import app  # noqa: E402

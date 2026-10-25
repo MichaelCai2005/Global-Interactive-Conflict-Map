@@ -35,6 +35,9 @@ jobs:
         working-directory: backend
     env:
       DATABASE_URL: ${{ secrets.HOSTED_DATABASE_URL }}
+      # The headline model that screens GDELT (app.headline_model) downloads here once and
+      # is cached between runs.
+      FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.fastembed
     steps:
       - name: Check for the database secret
         if: env.DATABASE_URL == ''
@@ -51,7 +54,13 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
       - name: Install
         if: env.DATABASE_URL != ''
-        run: pip install .
+        run: pip install ".[screen]"
+      - name: Cache the headline model
+        if: env.DATABASE_URL != ''
+        uses: actions/cache@v5
+        with:
+          path: .fastembed
+          key: fastembed-bge-small-en-v1.5
       - name: Migrate
         if: env.DATABASE_URL != ''
         run: alembic upgrade head

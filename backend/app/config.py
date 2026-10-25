@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Browser origins allowed to call the API: the gods-eye-view globe, and the frontend
     # when it's hosted on another site, e.g. https://<user>.github.io (no path).
     cors_origins: str = "http://localhost:4173,http://127.0.0.1:4173"
+    # Screen GDELT violence with the headline model (app.headline_model) as well as the word
+    # rules, when fastembed is installed (the "screen" extra).
+    gdelt_headline_model: bool = True
     # NASA FIRMS map key for `python -m app.live firms` (free, firms.modaps.eosdis.nasa.gov).
     firms_map_key: str | None = None
 

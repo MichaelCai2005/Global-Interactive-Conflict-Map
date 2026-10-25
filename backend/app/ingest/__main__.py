@@ -26,6 +26,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+from app import headline_model
 from app.config import get_settings
 from app.conflict_type import reclassify
 from app.db import session_factory
@@ -114,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "screen-gdelt":
         with session_factory()() as session:
-            counts = rescreen(session)
+            counts = rescreen(session, headline_model.shared())
             session.commit()
         for reason, n in sorted(counts.items(), key=lambda kv: -kv[1]):
             logging.info("%s: %d events", reason or "shown", n)

@@ -70,6 +70,13 @@ Every row ends up in exactly one bucket, and each ingest run records the counts:
   and 1 day of one from a higher-priority source is linked to it in `event_links` and marked
   `duplicate_of_id`. Country-level locations are never linked, since a country centroid says
   nothing about where something happened. Priority is UCDP, then ACLED, then GDELT.
+- **Screened out**: GDELT codes ordinary crime, and stories not about violence at all, with
+  the same codes as war. Such violent GDELT events stay in the database but are hidden from
+  the map when word rules on the headline, tone and actors (`app/ingest/gdelt_screen.py`) or
+  a small local headline classifier (`app/headline_model.py`; free, no API key; needs
+  `pip install -e ".[screen]"`) find they are not armed conflict.
+  `python -m app.ingest screen-gdelt` applies both again; `python -m app.headline_model
+  evaluate` scores them on 280 hand-labelled articles.
 
 All events share one schema: date range, `event_type`, `is_violent` (violence vs signal),
 location with precision (`exact`, `admin`, `country`), actors, fatalities, report count,
