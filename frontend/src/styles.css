@@ -241,16 +241,15 @@ code {
 }
 
 .brand h1 {
-  font-size: 16px;
+  font-family: "Unbounded", system-ui, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .brand-mark {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, var(--serious), var(--violence));
-  box-shadow: 0 0 0 3px rgba(217, 89, 38, 0.25);
+  flex: none;
 }
 
 .pane-toggles {

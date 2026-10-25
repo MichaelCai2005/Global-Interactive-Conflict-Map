@@ -4,10 +4,98 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%23d95926'/%3E%3C/svg%3E" />
-    <title>Conflict Map</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600&display=swap" />
+    <title>Conflict Atlas</title>
+    <!-- The loading screen is plain HTML so it shows before the app's script has loaded.
+         src/lib/splash.ts updates its status and removes it once the first data arrives. -->
+    <style>
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: radial-gradient(ellipse at 50% 45%, #141a21 0%, #0a0c0f 70%);
+        color: #f0efec;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        transition: opacity 0.4s ease;
+      }
+      #splash.is-done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash svg {
+        width: min(160px, 40vw);
+        height: auto;
+      }
+      #splash .splash-word {
+        font-family: "Unbounded", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: clamp(24px, 6vw, 38px);
+        letter-spacing: 0.12em;
+      }
+      #splash .splash-bar {
+        position: relative;
+        width: min(240px, 66vw);
+        height: 2px;
+        background: #222830;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      #splash .splash-bar::after {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 35%;
+        background: #3987e5;
+        animation: splash-slide 1.3s ease-in-out infinite;
+      }
+      #splash .splash-status {
+        font: 12px ui-monospace, "SF Mono", Menlo, monospace;
+        color: #898781;
+        letter-spacing: 0.04em;
+        min-height: 1.5em;
+      }
+      @keyframes splash-slide {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(290%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash .splash-bar::after { animation: none; width: 100%; opacity: 0.5; }
+        #splash animate { display: none; }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash" role="status" aria-live="polite">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#3987e5" stroke-width="5" />
+        <ellipse cx="50" cy="50" rx="18" ry="40" fill="none" stroke="#3987e5" stroke-width="3" opacity=".55">
+          <animate attributeName="rx" values="40;0;40" dur="3.2s" repeatCount="indefinite" />
+        </ellipse>
+        <ellipse cx="50" cy="50" rx="34" ry="40" fill="none" stroke="#3987e5" stroke-width="3" opacity=".55">
+          <animate attributeName="rx" values="0;40;0" dur="3.2s" repeatCount="indefinite" />
+        </ellipse>
+        <line x1="10" y1="50" x2="90" y2="50" stroke="#3987e5" stroke-width="3" opacity=".55" />
+        <circle cx="66" cy="34" r="4.5" fill="#f0efec">
+          <animate attributeName="r" values="3;5.5;3" dur="1.6s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="34" cy="62" r="3" fill="#f0efec" opacity=".8">
+          <animate attributeName="r" values="2;4;2" dur="1.6s" begin="0.5s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="58" cy="70" r="3" fill="#f0efec" opacity=".6">
+          <animate attributeName="r" values="2;4;2" dur="1.6s" begin="1s" repeatCount="indefinite" />
+        </circle>
+      </svg>
+      <div class="splash-word">CONFLICT ATLAS</div>
+      <div class="splash-bar"></div>
+      <div class="splash-status">Starting up</div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
