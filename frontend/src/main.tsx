@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { App } from "./App";
 import { ApiError } from "./api/client";
+import { setSplashStatus } from "./lib/splash";
 import "./styles.css";
 import "./tailwind.css";
 
@@ -16,6 +17,8 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+setSplashStatus("Loading conflict events");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

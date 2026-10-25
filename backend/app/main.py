@@ -41,7 +41,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Global Interactive Conflict Map API",
+    title="Conflict Atlas API",
     description="Conflict events from UCDP and ACLED and news signals from GDELT, cleaned and linked.",
     version="0.1.0",
     lifespan=lifespan,

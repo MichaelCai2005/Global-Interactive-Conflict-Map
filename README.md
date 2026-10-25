@@ -1,4 +1,8 @@
-# Global Interactive Conflict Map
+<img src="frontend/public/favicon.svg" alt="" width="64" align="left" />
+
+# Conflict Atlas
+
+<br clear="left" />
 
 A system for studying how conflicts emerge: it pulls together records of past violence and
 the news signals that came before it (protests, threats, troop movements), cleans and links
