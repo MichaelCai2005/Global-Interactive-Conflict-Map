@@ -17,6 +17,7 @@ python -m app.ingest load vdem V-Dem-CY-Core-v16.csv
 python -m app.ingest build-features --start 2022-01 --end 2022-12
 python -m app.ingest prune-gdelt-ids --days 30
 python -m app.ingest classify
+python -m app.ingest screen-gdelt
 """
 
 import argparse
@@ -30,6 +31,7 @@ from app.conflict_type import reclassify
 from app.db import session_factory
 from app.features import build_cell_months
 from app.ingest import download
+from app.ingest.gdelt_screen import rescreen
 from app.ingest.loader import SOURCES, ingest_file, load_gdelt_live, prune_gdelt_ids
 
 
@@ -75,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "classify", help="sort stored ACLED and GDELT violence into UCDP's kinds again"
     )
+    commands.add_parser(
+        "screen-gdelt", help="decide again which stored GDELT violence is kept off the map"
+    )
 
     build = commands.add_parser(
         "build-features", help="rebuild cell-month features from the loaded events"
@@ -105,6 +110,14 @@ def main(argv: list[str] | None = None) -> int:
             session.commit()
         for kind, n in sorted(counts.items(), key=lambda kv: -kv[1]):
             logging.info("%s: %d events", kind or "unclear", n)
+        return 0
+
+    if args.command == "screen-gdelt":
+        with session_factory()() as session:
+            counts = rescreen(session)
+            session.commit()
+        for reason, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            logging.info("%s: %d events", reason or "shown", n)
         return 0
 
     if args.command == "download":

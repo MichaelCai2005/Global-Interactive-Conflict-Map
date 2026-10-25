@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.db import get_db
@@ -75,20 +75,9 @@ class EventFilters(BaseModel):
             )
         if not self.include_duplicates:
             query = query.where(Event.duplicate_of_id.is_(None))
-        return query.where(
-            or_(
-                Event.source != "gdelt",
-                Event.is_violent.is_(False),
-                Event.admin1.is_distinct_from(DATELINE_ADM1),
-            )
-        )
-
-
-# GDELT places a story where it is datelined, and US news is datelined Washington: a debate,
-# a court ruling or a strike abroad becomes "fighting" at the White House. Nearly all of
-# GDELT's violent events in DC are of this kind, so they are hidden. Protests and other
-# signals there are real and stay.
-DATELINE_ADM1 = "USDC"
+        # GDELT "violence" from articles about something else, ordinary crime, or a story
+        # placed at its Washington dateline; see app.ingest.gdelt_screen.
+        return query.where(Event.screened_out.is_(None))
 
 
 # FastAPI reads a query model only when it is the endpoint's sole query parameter, so each

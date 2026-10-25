@@ -227,6 +227,7 @@ def explain_week(iso3: str, week: date, db: Db):
             Event.country_iso3 == country.iso3,
             Event.event_date.between(current, current + timedelta(days=6)),
             Event.duplicate_of_id.is_(None),
+            Event.screened_out.is_(None),
         )
         .order_by(
             Event.is_violent.desc(),

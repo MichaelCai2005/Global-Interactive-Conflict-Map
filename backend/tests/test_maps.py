@@ -1,5 +1,6 @@
 from sqlalchemy import update
 
+from app.ingest.gdelt_screen import rescreen
 from app.models import Event
 from tests.test_ingest import load_sample
 
@@ -123,7 +124,7 @@ def test_events_accept_several_sources(client, session, tmp_path):
 def test_gdelt_violence_datelined_in_washington_is_hidden(client, session, tmp_path):
     load_sample(session, tmp_path)
     session.execute(update(Event).where(Event.source == "gdelt").values(admin1="USDC"))
-    session.flush()
+    rescreen(session)
     # The GDELT fight at 10N 10E goes; the GDELT protest and UCDP's events stay.
     assert client.get("/summary").json() == {
         "violent_events": 2,

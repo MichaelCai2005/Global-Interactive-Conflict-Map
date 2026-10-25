@@ -37,6 +37,7 @@ class NormalizedEvent:
     conflict_id: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     first_reported_at: datetime | None = None
+    screened_out: str | None = None
     conflict_type: str | None = None
 
 

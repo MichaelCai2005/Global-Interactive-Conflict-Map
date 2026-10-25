@@ -25,6 +25,7 @@ from typing import TextIO
 from urllib.parse import urlsplit
 
 from app import conflict_type, countries
+from app.ingest import gdelt_screen
 from app.ingest.common import (
     FieldErrors,
     NormalizedEvent,
@@ -147,6 +148,8 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
     actor1_code = clean_text(raw.get("Actor1Code")) or ""
     actor2_code = clean_text(raw.get("Actor2Code")) or ""
     place = clean_text(raw.get("ActionGeo_FullName"))
+    admin1 = clean_text(raw.get("ActionGeo_ADM1Code"))
+    url = clean_text(raw.get("SOURCEURL"))
     violent = root in VIOLENT_ROOTS
     # Many articles about one incident produce many rows that differ only in id and counts.
     fingerprint = "|".join(
@@ -168,19 +171,22 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
         )
         if violent
         else None,
+        screened_out=gdelt_screen.screen(url, tone, admin1, (actor1_code, actor2_code))
+        if violent
+        else None,
         latitude=lat,
         longitude=lon,
         geo_precision=GEO_TYPE_PRECISION[geo_type],
         # FullName reads "City, Region, Country"; the last part is the country name.
         country=normalize_country(place.rsplit(",", 1)[-1]) if place else None,
         country_iso3=countries.from_fips(raw.get("ActionGeo_CountryCode")),
-        admin1=clean_text(raw.get("ActionGeo_ADM1Code")),
+        admin1=admin1,
         location_name=place,
         actor1=clean_text(raw.get("Actor1Name")),
         actor2=clean_text(raw.get("Actor2Name")),
         report_count=max(mentions or 1, 1),
         tone=tone,
-        source_url=clean_text(raw.get("SOURCEURL")),
+        source_url=url,
         attributes={
             "cameo_code": event_code,
             "quad_class": clean_text(raw.get("QuadClass")),
