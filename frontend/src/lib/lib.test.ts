@@ -21,7 +21,6 @@ import {
   describeAge,
   describeTimeAgo,
   headlineFromUrl,
-  lastWholeWeek,
   latestWindow,
   oneEachStory,
   reportedSince,
@@ -192,11 +191,6 @@ describe("now", () => {
     expect(describeAge("2026-10-19", "2026-10-24")).toBe("5 days ago");
     expect(describeAge("2026-09-30", "2026-10-24")).toBe("3 weeks ago");
     expect(describeAge("2022-12-31", "2026-10-24")).toBe("4 years ago");
-  });
-
-  it("ends the newest whole week on a Sunday", () => {
-    expect(lastWholeWeek("2026-10-23")).toBe("2026-10-18"); // a Friday
-    expect(lastWholeWeek("2026-09-27")).toBe("2026-09-27"); // a Sunday
   });
 
   it("reads a headline out of a news link", () => {

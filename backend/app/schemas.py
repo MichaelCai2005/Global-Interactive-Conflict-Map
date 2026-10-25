@@ -351,7 +351,7 @@ class RiskWeek(BaseModel):
     previous_week: date | None
     first_week: date
     last_week: date
-    provisional: bool = Field(description="UCDP and ACLED do not cover this week yet")
+    provisional: bool = Field(description="UCDP and ACLED do not wholly cover this week yet")
     regions: list[RiskRegion]
     weights: RiskPoints = Field(
         description="Most points each component can add, before parts with no data that week "

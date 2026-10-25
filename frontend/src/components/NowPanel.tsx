@@ -9,7 +9,6 @@ import {
   describeAge,
   describeTimeAgo,
   headlineFromUrl,
-  lastWholeWeek,
   latestWindow,
   oneEachStory,
   reportedSince,
@@ -59,9 +58,8 @@ export function NowPanel({ facets, filters, bbox, window, onShowLatest, onEvent,
   const deathsEnd = deathsThrough(facets.sources, filters.sources);
   const deathsWindow = deathsEnd ? latestWindow(deathsEnd, 30) : null;
   const deadliest = useViolentEvents({ ...scope, window: deathsWindow }, "fatalities", 5, violence && deathsWindow !== null);
-  // Risk for the newest whole week with counted deaths: past it, parts with no data drop out
-  // and the rest are scaled up, so every country seems to rise at once.
-  const rising = useRiskWeek(lastWholeWeek(deathsEnd ?? last), "rise", 6);
+  // The API moves rising risk back to the newest week with every death counted.
+  const rising = useRiskWeek(last, "rise", 6);
   const risers = rising.data?.regions ?? [];
   const countries = useCountries(scope, 8);
   const onMap = window.start === week.start && window.end === week.end;
@@ -179,8 +177,7 @@ export function NowPanel({ facets, filters, bbox, window, onShowLatest, onEvent,
         <section>
           <h3>Risk rising most</h3>
           <p className="muted small">
-            Week of {formatDate(rising.data.week)}, the newest with counted deaths
-            {rising.data.provisional && " (provisional)"}. Click for why.
+            Week of {formatDate(rising.data.week)}, the newest with counted deaths. Click for why.
           </p>
           <ol className="rise-list">
             {risers.map((r) => (

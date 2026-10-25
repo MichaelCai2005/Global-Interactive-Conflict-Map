@@ -141,8 +141,8 @@ def test_build_rows_pairs_each_week_with_the_deaths_after_it():
             tone=[None] * n,
         ),
     }
-    # The last outcome week (week 65) is partial, so outcomes run through week 64.
-    rows = risk_model.build_rows(weeks, data, {}, weeks[65])
+    # Week 64 is the last the outcome sources wholly cover, so outcomes run through it.
+    rows = risk_model.build_rows(weeks, data, {}, weeks[64])
     assert set(rows.iso3) == {"AAA"}
     assert rows.week[0] == np.datetime64(weeks[risk_model.BURN_IN])
     assert rows.week[-1] == np.datetime64(weeks[65 - risk_model.HORIZON - 1])

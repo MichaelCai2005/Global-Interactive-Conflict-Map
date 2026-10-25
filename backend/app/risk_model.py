@@ -98,8 +98,8 @@ def build_rows(
     by_country: dict[str, list[risk.ScoreRow]] = defaultdict(list)
     for r in scored:
         by_country[r.iso3].append(r)
-    # The week of the last hand-coded event is usually partial, so outcomes stop before it.
-    end = weeks.index(provisional_after) if provisional_after in weeks else len(weeks)
+    # Outcomes stop with the last week the hand-coded sources wholly cover.
+    end = weeks.index(provisional_after) + 1 if provisional_after in weeks else len(weeks)
     last = end - HORIZON - 1
     cols: dict[str, list] = defaultdict(list)
     for c in sorted(by_country):

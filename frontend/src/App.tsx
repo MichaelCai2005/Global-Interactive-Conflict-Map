@@ -4,7 +4,7 @@ import { type Layout, type LayoutChangedMeta, useGroupRef } from "react-resizabl
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useMe } from "./api/account";
 import { queryString, request } from "./api/client";
-import { riskGeoJson, useRiskWeek } from "./api/risk";
+import { type RiskSort, riskGeoJson, useRiskWeek } from "./api/risk";
 import { MAX_POINTS, mapLayerQuery, useEvent, useFacets, useMapLayer, useTasks, useTimeline } from "./api/hooks";
 import type { Bbox, CountrySummary, WatchItem } from "./api/types";
 import { AccountMenu } from "./components/AccountMenu";
@@ -82,6 +82,7 @@ export function App() {
   // On the Risk tab the map shows country risk scores for the window's last week instead.
   const riskMode = state.panel === "risk";
   const [riskCountry, setRiskCountry] = useState<string | null>(null);
+  const [riskSort, setRiskSort] = useState<RiskSort>("score");
   const risk = useRiskWeek(timeWindow?.end ?? null, "score", 300, riskMode && timeWindow !== null);
   const riskLayer = useMemo(() => (riskMode ? riskGeoJson(risk.data) : null), [riskMode, risk.data]);
   const layer = useMapLayer(mapScope, cell, timeWindow !== null && !riskMode);
@@ -330,6 +331,8 @@ export function App() {
                 onCountry={showCountry}
                 onRisk={(iso3, lon, lat) => {
                   setRiskCountry(iso3);
+                  // Rising scores the week the Now tab listed it in.
+                  setRiskSort("rise");
                   setPanel("risk");
                   if (lon !== null && lat !== null) map.current?.flyTo(lon, lat, 5);
                 }}
@@ -347,6 +350,8 @@ export function App() {
                 onEvent={showEvent}
                 selected={riskCountry}
                 onSelect={setRiskCountry}
+                sort={riskSort}
+                onSort={setRiskSort}
                 onCountry={(r) => {
                   if (r.longitude !== null && r.latitude !== null) map.current?.flyTo(r.longitude, r.latitude, 5);
                 }}

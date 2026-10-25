@@ -27,6 +27,9 @@ interface Props {
   selected?: string | null;
   /** Called with the ISO3 of the country opened, or null when going back to the list. */
   onSelect?(iso3: string | null): void;
+  /** The list's order, when the parent controls it, e.g. to open on Rising from the Now tab. */
+  sort?: RiskSort;
+  onSort?(sort: RiskSort): void;
 }
 
 const SORTS: [RiskSort, string][] = [
@@ -53,8 +56,13 @@ const EMPTY_TEXT: Record<RiskSort, string> = {
 const LIST_LENGTH = 15;
 
 /** Weekly conflict risk by country at the timeline's current week, and why it changed. */
-export function RiskPanel({ week, onEvent, onCountry, selected: selectedProp, onSelect }: Props) {
-  const [sort, setSort] = useState<RiskSort>("score");
+export function RiskPanel({ week, onEvent, onCountry, selected: selectedProp, onSelect, sort: sortProp, onSort }: Props) {
+  const [ownSort, setOwnSort] = useState<RiskSort>("score");
+  const sort = sortProp ?? ownSort;
+  const setSort = (value: RiskSort) => {
+    if (sortProp === undefined) setOwnSort(value);
+    onSort?.(value);
+  };
   const [showAll, setShowAll] = useState(false);
   const [ownSelected, setOwnSelected] = useState<string | null>(null);
   const selected = selectedProp !== undefined ? selectedProp : ownSelected;
@@ -76,14 +84,18 @@ export function RiskPanel({ week, onEvent, onCountry, selected: selectedProp, on
       <p className="scope-line">
         {data ? `Week of ${formatDate(data.week)}` : "Risk"}
         {data && data.week !== weekOf(week) && (
-          <span className="muted"> · nearest scored week to {formatDate(week)}</span>
+          <span className="muted">
+            {sort !== "score" && data.week < weekOf(week)
+              ? " · the newest with counted deaths"
+              : ` · nearest scored week to ${formatDate(week)}`}
+          </span>
         )}
       </p>
       {risk.isError && <p className="error small">{risk.error.message}</p>}
       {data?.provisional && (
         <p className="risk-note small">
-          Provisional: UCDP and ACLED do not cover this week yet, so History only decays and Surge
-          is left out.
+          Provisional: UCDP and ACLED have not coded all of this week yet, so deaths are missing and
+          scores will change.
         </p>
       )}
 
@@ -114,12 +126,7 @@ export function RiskPanel({ week, onEvent, onCountry, selected: selectedProp, on
             </div>
           </div>
           <Legend />
-          {data && rows.length === 0 && (
-            <p className="muted small">
-              {EMPTY_TEXT[sort]}
-              {data.provisional && sort !== "score" && " Until UCDP covers a week, only Signal can move a score."}
-            </p>
-          )}
+          {data && rows.length === 0 && <p className="muted small">{EMPTY_TEXT[sort]}</p>}
           <ol className="risk-list">
             {(showAll ? rows : rows.slice(0, LIST_LENGTH)).map((r) => (
               <li key={r.iso3}>

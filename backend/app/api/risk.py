@@ -2,13 +2,13 @@ from datetime import date, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, true
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import risk as scoring
 from app.db import get_db
 from app.models import Event, RiskCountry, RiskScore
-from app.risk import CUSUM_ALARM, FULL_HISTORY, HALF_LIFE_WEEKS, monday
+from app.risk import COMPONENTS, CUSUM_ALARM, FULL_HISTORY, HALF_LIFE_WEEKS, monday
 from app.schemas import (
     EventOut,
     RiskComponentChange,
@@ -40,6 +40,18 @@ def points(s: RiskScore) -> RiskPoints:
     )
 
 
+def points_before(before: RiskScore, then: frozenset[str], now: frozenset[str]) -> RiskPoints:
+    """The week before's points, scored from this week's parts when the two weeks' differ."""
+    if then == now:
+        return points(before)
+    return RiskPoints(**scoring.points_for(scoring.levels(before), now))
+
+
+def score_before(before: RiskScore, then: frozenset[str], now: frozenset[str]) -> float:
+    """The week before's score, to compare with this week's like with like."""
+    return before.score if then == now else scoring.score_for(scoring.levels(before), now)
+
+
 def week_range(db: Session) -> tuple[date, date]:
     first, last = db.execute(select(func.min(RiskScore.week), func.max(RiskScore.week))).one()
     if first is None:
@@ -67,50 +79,66 @@ def risk_week(
 ):
     """Every country with a score in one week, for colouring the map at a point on the timeline.
 
-    Rising and falling keep only the countries whose score rose or fell that week.
+    Rising and falling keep only the countries whose score rose or fell, in the newest week
+    UCDP and ACLED wholly cover at the latest: after it deaths are missing, so scores only fade.
     """
     first, last = week_range(db)
     current = min(max(monday(week), first), last) if week else last
+    if sort != "score":
+        covered = db.scalar(select(func.max(RiskScore.week)).where(~RiskScore.provisional))
+        current = min(current, covered or current)
     previous = current - timedelta(weeks=1) if current > first else None
-    prev = aliased(RiskScore)
-    change = RiskScore.score - prev.score
-    order, moved = {
-        "score": ([RiskScore.score.desc()], true()),
-        "rise": ([change.desc(), RiskScore.score.desc()], change >= MIN_POINTS),
-        "fall": ([change.asc(), RiskScore.score.desc()], change <= -MIN_POINTS),
-    }[sort]
-    scored = (RiskScore.score >= MIN_POINTS) | (prev.score >= MIN_POINTS)
     rows = db.execute(
-        select(RiskScore, RiskCountry, prev.score)
+        select(RiskScore, RiskCountry)
         .join(RiskCountry, RiskCountry.iso3 == RiskScore.iso3)
-        .outerjoin(prev, (prev.iso3 == RiskScore.iso3) & (prev.week == previous))
-        .where(RiskScore.week == current, scored, moved)
-        .order_by(*order, RiskScore.iso3)
-        .limit(limit)
+        .where(RiskScore.week == current)
     ).all()
-    regions = [
-        RiskRegion(
-            iso3=c.iso3,
-            name=c.name,
-            latitude=c.latitude,
-            longitude=c.longitude,
-            score=s.score,
-            change=None if prev_score is None else s.score - prev_score,
-            points=points(s),
-            trend=s.trend,
-            surge_alarm=s.surge_alarm,
-            provisional=s.provisional,
+    before = {}
+    if previous:
+        before = {
+            s.iso3: s for s in db.scalars(select(RiskScore).where(RiskScore.week == previous))
+        }
+    parts = scoring.parts_by_week(db, previous or current, current)
+
+    regions = []
+    for s, c in rows:
+        then = before.get(s.iso3)
+        prev_score = score_before(then, parts[then.week], parts[current]) if then else None
+        if s.score < MIN_POINTS and (prev_score is None or prev_score < MIN_POINTS):
+            continue
+        change = None if prev_score is None else s.score - prev_score
+        if sort != "score" and (change is None or abs(change) < MIN_POINTS):
+            continue
+        if (sort == "rise" and change < 0) or (sort == "fall" and change > 0):
+            continue
+        regions.append(
+            RiskRegion(
+                iso3=c.iso3,
+                name=c.name,
+                latitude=c.latitude,
+                longitude=c.longitude,
+                score=s.score,
+                change=change,
+                points=points(s),
+                trend=s.trend,
+                surge_alarm=s.surge_alarm,
+                provisional=s.provisional,
+            )
         )
-        for s, c, prev_score in rows
-    ]
-    provisional = db.scalar(select(RiskScore.provisional).where(RiskScore.week == current).limit(1))
+    regions.sort(
+        key={
+            "score": lambda r: (-r.score, r.iso3),
+            "rise": lambda r: (-r.change, -r.score, r.iso3),
+            "fall": lambda r: (r.change, -r.score, r.iso3),
+        }[sort]
+    )
     return RiskWeek(
         week=current,
         previous_week=previous,
         first_week=first,
         last_week=last,
-        provisional=bool(provisional),
-        regions=regions,
+        provisional=any(s.provisional for s, _ in rows),
+        regions=regions[:limit],
         weights=RiskPoints(**scoring.WEIGHTS),
         weights_fitted=scoring.WEIGHTS != scoring.HAND_SET_WEIGHTS,
     )
@@ -127,11 +155,14 @@ def risk_series(iso3: str, db: Db, start: date | None = None, end: date | None =
     if end:
         query = query.where(RiskScore.week <= end)
     scores = list(db.scalars(query))
+    parts = scoring.parts_by_week(db, scores[0].week, scores[-1].week) if scores else {}
     series = [
         RiskPoint(
             week=s.week,
             score=s.score,
-            change=s.score - before.score if before else None,
+            change=s.score - score_before(before, parts[before.week], parts[s.week])
+            if before
+            else None,
             points=points(s),
             trend=s.trend,
             surge_alarm=s.surge_alarm,
@@ -171,19 +202,23 @@ def explain_week(iso3: str, week: date, db: Db):
         RiskNeighbour(iso3=s.iso3, name=n, score=s.score, history=s.history) for s, n in neighbours
     ]
 
-    now_points, before_points = points(now), points(before) if before else None
-    components = [
-        RiskComponentChange(
-            component=name,
-            points=getattr(now_points, name),
-            previous_points=getattr(before_points, name) if before_points else None,
-            change=getattr(now_points, name) - getattr(before_points, name)
-            if before_points
-            else None,
-            explanation=explain(name, now, near),
+    parts = scoring.parts_by_week(db, previous_week, current)
+    then = parts.get(previous_week, frozenset())
+    now_points = points(now)
+    before_points = points_before(before, then, parts[current]) if before else None
+    components = []
+    for name in LABELS:
+        # A part left out this week has no change to show.
+        was = getattr(before_points, name) if before_points and name in parts[current] else None
+        components.append(
+            RiskComponentChange(
+                component=name,
+                points=getattr(now_points, name),
+                previous_points=was,
+                change=None if was is None else getattr(now_points, name) - was,
+                explanation=explain(name, now, near),
+            )
         )
-        for name in LABELS
-    ]
     components.sort(key=lambda c: abs(c.change or 0), reverse=True)
 
     events = db.scalars(
@@ -201,29 +236,42 @@ def explain_week(iso3: str, week: date, db: Db):
         )
         .limit(8)
     )
-    change = now.score - before.score if before else None
+    previous_score = score_before(before, then, parts[current]) if before else None
+    change = now.score - previous_score if previous_score is not None else None
     return RiskExplanation(
         iso3=country.iso3,
         name=country.name,
         week=current,
         previous_week=previous_week if before else None,
         score=now.score,
-        previous_score=before.score if before else None,
+        previous_score=previous_score,
         change=change,
         trend=now.trend,
         surge_alarm=now.surge_alarm,
         provisional=now.provisional,
-        summary=summarise(now, change, components),
+        summary=summarise(now, change, components, then if before else None, parts[current]),
         components=components,
         events=[EventOut.model_validate(e) for e in events],
         neighbours=near,
     )
 
 
-def summarise(now: RiskScore, change: float | None, components: list[RiskComponentChange]) -> str:
+def summarise(
+    now: RiskScore,
+    change: float | None,
+    components: list[RiskComponentChange],
+    then: frozenset[str] | None,
+    parts: frozenset[str],
+) -> str:
     text = f"Score {now.score:.0f}"
     if change is not None:
-        text += f" ({change:+.0f} on the week before)"
+        # A change that rounds to zero reads 0, never -0.
+        text += f" ({change:+.0f} on the week before" if round(change) else " (0 on the week before"
+        if then is not None and then != parts:
+            rescored = [f"without {LABELS[n]}" for n in COMPONENTS if n in then - parts]
+            rescored += [f"with {LABELS[n]}" for n in COMPONENTS if n in parts - then]
+            text += f", both scored {' and '.join(rescored)}"
+        text += ")"
         top = components[0]
         if top.change is not None and abs(top.change) >= 1:
             verb = "rose" if top.change > 0 else "fell"
@@ -236,10 +284,8 @@ def summarise(now: RiskScore, change: float | None, components: list[RiskCompone
     if now.trend:
         text += f" Trend over 12 weeks: {now.trend}."
     if now.provisional:
-        text += (
-            " Provisional: UCDP and ACLED do not cover this week yet, so History only decays"
-            " and Surge is left out."
-        )
+        text += " Provisional: UCDP and ACLED have not coded all of this week yet, so deaths are missing"
+        text += "." if "surge" in parts else " and Surge is left out."
     return text
 
 

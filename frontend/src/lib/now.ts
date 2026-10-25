@@ -37,11 +37,6 @@ export function describeAge(date: string, today: string): string {
   return `${Math.round(days / 365)} years ago`;
 }
 
-/** The Sunday on or before a date: the end of the newest whole week (weeks start on Monday). */
-export function lastWholeWeek(date: string): string {
-  return addDays(date, -new Date(`${date}T00:00:00Z`).getUTCDay());
-}
-
 /**
  * A readable title from a news link's address, which usually ends in the headline:
  * ".../2026/10/18/fatalities-reported-after-incident-at-base/" gives "Fatalities reported

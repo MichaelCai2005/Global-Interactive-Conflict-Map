@@ -174,6 +174,22 @@ describe("RiskPanel with a controlled selection", () => {
   });
 });
 
+describe("RiskPanel with a controlled sort", () => {
+  it("asks for the sort it is given and names the week rising risk moved back to", async () => {
+    const fetchMock = mockApi();
+    const onSort = vi.fn();
+    // The timeline is past the newest week with counted deaths, 9 Oct 2023.
+    renderPanel({ week: "2023-11-20", sort: "rise", onSort });
+
+    expect(await screen.findByText(/the newest with counted deaths/)).toBeTruthy();
+    expect(fetchMock.mock.calls[0]![0]).toContain("sort=rise");
+    expect(screen.getByRole("radio", { name: "Rising" }).getAttribute("aria-checked")).toBe("true");
+
+    await userEvent.click(screen.getByRole("radio", { name: "Falling" }));
+    expect(onSort).toHaveBeenCalledWith("fall");
+  });
+});
+
 describe("risk helpers", () => {
   it("never shows a change as -0", () => {
     expect(signed(-0.01, 1)).toBe("0.0");

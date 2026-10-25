@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, timedelta
 
 import pytest
@@ -180,6 +181,24 @@ def test_weeks_after_the_last_hand_coded_event_are_provisional():
     assert rows[("AAA", WEEKS[51])].provisional
 
 
+def test_only_wholly_covered_weeks_are_final():
+    assert risk.last_whole_week(date(2026, 9, 30)) == date(2026, 9, 21)  # a Wednesday
+    assert risk.last_whole_week(date(2026, 10, 4)) == date(2026, 9, 28)  # a Sunday
+
+
+def test_trends_compare_weeks_scored_from_the_same_parts():
+    # A steady war whose events stop after week 69, as when UCDP's last release ends.
+    rows = scored(
+        {"WAR": weeks_of(violent=dict.fromkeys(range(70), 1), deaths=dict.fromkeys(range(70), 8))}
+    )
+    before, after = rows[("WAR", WEEKS[69])], rows[("WAR", WEEKS[70])]
+    # Surge drops out and History is scaled up to fill 100, so the score jumps past 50...
+    assert before.score < 50 <= after.score
+    # ...but nothing happened, so it is no new hot spot. Scored the same way, the weeks
+    # before were already over 50.
+    assert after.trend == "persistent"
+
+
 def add_event(session, run, n, **fields):
     defaults = dict(
         source="ucdp",
@@ -277,6 +296,60 @@ def test_risk_lists_leave_out_what_shows_as_zero(client, scored_db):
     falling = regions(70, "fall")
     assert [r["iso3"] for r in falling] == ["UKR"]
     assert falling[0]["change"] <= -0.5
+
+
+@pytest.fixture
+def uncovered_db(session):
+    """UCDP events for UKR on the Monday of weeks 0-69, then only GDELT news to week 79."""
+    run = IngestRun(source="ucdp", filename="test")
+    session.add(run)
+    session.flush()
+    for w in range(N_WEEKS):
+        if w < 70:
+            add_event(session, run, w, event_date=WEEKS[w], fatalities_best=2)
+        else:
+            add_event(session, run, w, event_date=WEEKS[w], source="gdelt", is_violent=False)
+    session.commit()
+    risk.build(session)
+    return session
+
+
+def test_changes_compare_weeks_scored_from_the_same_parts(client, uncovered_db):
+    # Week 69 is covered only on its Monday, so week 68 is the last whole one.
+    assert client.get("/risk", params={"week": str(WEEKS[68])}).json()["provisional"] is False
+    assert client.get("/risk", params={"week": str(WEEKS[69])}).json()["provisional"] is True
+
+    # From week 70 no source covers the week, so Surge is left out and History scaled up.
+    stored = {p["week"]: p for p in client.get("/risk/UKR").json()["points"]}
+    assert stored[str(WEEKS[70])]["score"] - stored[str(WEEKS[69])]["score"] > 5
+    # Scored without Surge, like week 70, week 69 was about the same.
+    assert abs(stored[str(WEEKS[70])]["change"]) < 1
+    week = client.get("/risk", params={"week": str(WEEKS[70])}).json()
+    assert abs(week["regions"][0]["change"]) < 1
+    why = client.get(f"/risk/UKR/weeks/{WEEKS[70]}").json()
+    assert abs(why["change"]) < 1
+    assert "(0 on the week before, both scored without Surge)" in why["summary"]
+    assert "Surge is left out" in why["summary"]
+    surge = next(c for c in why["components"] if c["component"] == "surge")
+    assert surge["change"] is None
+
+    # Rising and falling use the newest week with every death counted.
+    for sort in ("rise", "fall"):
+        assert client.get("/risk", params={"week": str(WEEKS[75]), "sort": sort}).json()[
+            "week"
+        ] == str(WEEKS[68])
+    assert client.get("/risk", params={"week": str(WEEKS[75])}).json()["week"] == str(WEEKS[75])
+
+
+def test_stored_parts_match_the_parts_scored(uncovered_db):
+    weeks, data, provisional_after = risk.load_inputs(uncovered_db)
+    rows = score_countries(weeks, data, {}, provisional_after)
+    by_week = defaultdict(list)
+    for r in rows:
+        by_week[r.week].append(r)
+    expected = {w: risk.week_parts(by_week[w], False) for w in weeks}
+    assert risk.parts_by_week(uncovered_db, weeks[0], weeks[-1]) == expected
+    assert "surge" in expected[WEEKS[69]] and "surge" not in expected[WEEKS[70]]
 
 
 def test_risk_week_is_clamped_to_the_scored_range(client, scored_db):

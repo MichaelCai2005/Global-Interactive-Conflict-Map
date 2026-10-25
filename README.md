@@ -115,9 +115,12 @@ is the sum of four parts, so the map can always say why a country is red:
 
 A part no country has data for that week is left out and the rest scale up to 100. Each
 source's surge is measured only against weeks that source covers, so loading ACLED for one
-year doesn't read as a war starting. Weeks after the last UCDP or ACLED event are marked
+year doesn't read as a war starting. Weeks UCDP and ACLED don't wholly cover yet are marked
 provisional. Each week also gets a 12-week trend tag (new, intensifying, diminishing,
-persistent; Mann-Kendall test plus a 10-point minimum change).
+persistent; Mann-Kendall test plus a 10-point minimum change). Changes and trends compare
+like with like: an earlier week scored from other parts is scored again from this week's,
+so the scale-up when Surge drops out doesn't read as every country rising at once. Rising
+and Falling use the newest week UCDP and ACLED wholly cover.
 
 The dashboard's Risk tab follows the timeline: as the window moves, it ranks countries for
 that week, and for a country shows the score by part over time, a sentence on what moved

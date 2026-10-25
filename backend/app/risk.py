@@ -34,8 +34,8 @@ Where this departs from the doc, and why:
 
 History and Surge count UCDP and ACLED only: hand-coded sources are the outcome, GDELT
 the leading signal. Duplicates already linked to a higher-priority source are skipped.
-Weeks after the last hand-coded event are marked provisional, because UCDP is released
-months late.
+Weeks the hand-coded sources do not wholly cover, from the week of their last event on, are
+marked provisional, because UCDP is released months late.
 
 Run with `python -m app.risk build`. It rebuilds risk_countries and risk_scores.
 """
@@ -179,12 +179,47 @@ def death_level(decayed_deaths: float) -> float:
 
 
 def levels(r: ScoreRow) -> dict[str, float]:
+    """0-1 per component from the raw values, which a stored risk_scores row also has."""
     return {
         "history": death_level(r.history),
         "surge": min(r.surge / CUSUM_CAP, 1.0),
         "spread": death_level(r.spread),
         "signal": min(r.signal / FULL_SIGNAL, 1.0),
     }
+
+
+def week_parts(rows: Sequence[ScoreRow], has_neighbours: bool) -> frozenset[str]:
+    """The components scored in one week: those at least one country has a value for.
+
+    PARTS_SQL reads the same thing back from the stored rows.
+    """
+    parts = {"history"}
+    if any(r.surge_z is not None for r in rows):
+        parts.add("surge")
+    if has_neighbours:
+        parts.add("spread")
+    if any(z is not None for r in rows for z in (r.share_z, r.goldstein_z, r.tone_z)):
+        parts.add("signal")
+    return frozenset(parts)
+
+
+def points_for(level: dict[str, float], parts: Iterable[str]) -> dict[str, float]:
+    """What each component adds to the score when only `parts` are scored, scaled to 100."""
+    parts = set(parts)
+    scale = 100.0 / sum(WEIGHTS[name] for name in parts)
+    return {
+        name: scale * WEIGHTS[name] * level[name] if name in parts else 0.0 for name in COMPONENTS
+    }
+
+
+def score_for(level: dict[str, float], parts: Iterable[str]) -> float:
+    """The score from these levels when only `parts` are scored.
+
+    Weeks scored from different parts are compared by scoring the earlier one the same way
+    as the later: when UCDP's last release ends, Surge drops out and the rest are scaled up,
+    so every score would otherwise jump at once.
+    """
+    return min(sum(points_for(level, parts).values()), 100.0)
 
 
 def mann_kendall_z(series: Sequence[float]) -> float:
@@ -325,32 +360,29 @@ def score_countries(
             )
         rows[c] = out
 
+    parts = []
     for w in range(n_weeks):
         for c in countries:
             near = [rows[o][w].history for o in neighbours.get(c, ()) if o in rows]
             rows[c][w].spread = sum(near) / len(near) if near else 0.0
         week_rows = [rows[c][w] for c in countries]
-        available = {
-            "history": True,
-            "surge": any(r.surge_z is not None for r in week_rows),
-            "spread": bool(neighbours),
-            "signal": any(
-                z is not None for r in week_rows for z in (r.share_z, r.goldstein_z, r.tone_z)
-            ),
-        }
-        scale = 100.0 / sum(WEIGHTS[name] for name in COMPONENTS if available[name])
+        parts.append(week_parts(week_rows, bool(neighbours)))
         for r in week_rows:
             r.level = levels(r)
-            r.points = {
-                name: scale * WEIGHTS[name] * r.level[name] if available[name] else 0.0
-                for name in COMPONENTS
-            }
+            r.points = points_for(r.level, parts[w])
             r.score = min(sum(r.points.values()), 100.0)
 
+    # Trends compare like with like: weeks in the window scored from other parts are scored
+    # again from this week's.
+    starts = [max(0, w - TREND_WEEKS + 1) for w in range(n_weeks)]
+    alike = [all(parts[v] == parts[w] for v in range(starts[w], w)) for w in range(n_weeks)]
     for c in countries:
         scores = [r.score for r in rows[c]]
         for w, r in enumerate(rows[c]):
-            r.trend = trend_label(scores[max(0, w - TREND_WEEKS + 1) : w + 1])
+            window = scores[starts[w] : w + 1]
+            if not alike[w]:
+                window = [score_for(rows[c][v].level, parts[w]) for v in range(starts[w], w + 1)]
+            r.trend = trend_label(window)
     return [r for c in countries for r in rows[c]]
 
 
@@ -382,6 +414,26 @@ SELECT country_iso3, avg(latitude), avg(longitude), max(country) FROM events
 WHERE country_iso3 IS NOT NULL AND geo_precision <> 'country'
 GROUP BY 1
 """
+
+# week_parts, read back from the stored rows.
+PARTS_SQL = """
+SELECT s.week,
+       bool_or(s.surge_z IS NOT NULL) AS surge,
+       bool_or(cardinality(c.neighbours) > 0) AS spread,
+       bool_or(coalesce(s.share_z, s.goldstein_z, s.tone_z) IS NOT NULL) AS signal
+FROM risk_scores s JOIN risk_countries c ON c.iso3 = s.iso3
+WHERE s.week BETWEEN :first AND :last
+GROUP BY s.week
+"""
+
+
+def parts_by_week(db: Session, first: date, last: date) -> dict[date, frozenset[str]]:
+    """The components scored in each stored week from first to last."""
+    return {
+        r.week: frozenset(["history"] + [n for n in ("surge", "spread", "signal") if getattr(r, n)])
+        for r in db.execute(text(PARTS_SQL), {"first": first, "last": last})
+    }
+
 
 SCORE_COLUMNS = (
     "iso3", "week", "violent_events", "deaths", "gdelt_events", "history", "surge_source",
@@ -416,7 +468,12 @@ def load_inputs(db: Session) -> tuple[list[date], dict[str, CountryWeeks], date 
         text("SELECT max(event_date) FROM events WHERE source = ANY(:outcome)"),
         {"outcome": list(OUTCOME_SOURCES)},
     )
-    return weeks, data, monday(last_outcome) if last_outcome else None
+    return weeks, data, last_whole_week(last_outcome) if last_outcome else None
+
+
+def last_whole_week(day: date) -> date:
+    """The Monday of the last week that ends on or before this day."""
+    return monday(day + timedelta(days=1)) - timedelta(weeks=1)
 
 
 def build(db: Session) -> int:
