@@ -45,6 +45,11 @@ const TREND_TEXT: Record<RiskTrend, string> = {
   diminishing: "Diminishing",
   persistent: "Persistent",
 };
+const EMPTY_TEXT: Record<RiskSort, string> = {
+  score: "No country has a score this week.",
+  rise: "No country's score rose this week.",
+  fall: "No country's score fell this week.",
+};
 const LIST_LENGTH = 15;
 
 /** Weekly conflict risk by country at the timeline's current week, and why it changed. */
@@ -109,7 +114,12 @@ export function RiskPanel({ week, onEvent, onCountry, selected: selectedProp, on
             </div>
           </div>
           <Legend />
-          {data && rows.length === 0 && <p className="muted small">No country has a score this week.</p>}
+          {data && rows.length === 0 && (
+            <p className="muted small">
+              {EMPTY_TEXT[sort]}
+              {data.provisional && sort !== "score" && " Until UCDP covers a week, only Signal can move a score."}
+            </p>
+          )}
           <ol className="risk-list">
             {(showAll ? rows : rows.slice(0, LIST_LENGTH)).map((r) => (
               <li key={r.iso3}>

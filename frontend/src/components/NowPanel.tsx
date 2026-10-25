@@ -62,7 +62,7 @@ export function NowPanel({ facets, filters, bbox, window, onShowLatest, onEvent,
   // Risk for the newest whole week with counted deaths: past it, parts with no data drop out
   // and the rest are scaled up, so every country seems to rise at once.
   const rising = useRiskWeek(lastWholeWeek(deathsEnd ?? last), "rise", 6);
-  const risers = rising.data?.regions.filter((r) => (r.change ?? 0) >= 0.5) ?? [];
+  const risers = rising.data?.regions ?? [];
   const countries = useCountries(scope, 8);
   const onMap = window.start === week.start && window.end === week.end;
   const today = todayIso();

@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 import pytest
+from sqlalchemy import text
 
 from app import risk
 from app.models import Event, IngestRun
@@ -257,6 +258,25 @@ def test_risk_endpoints_explain_the_escalation(client, scored_db):
     assert len(why["events"]) == 8
     assert why["events"][0]["fatalities_best"] == 40
     assert why["neighbours"][0]["iso3"] == "RUS"
+
+
+def test_risk_lists_leave_out_what_shows_as_zero(client, scored_db):
+    # A death long ago decays to a few billionths of a point but never to zero.
+    scored_db.execute(text("UPDATE risk_scores SET score = 1e-9 WHERE iso3 = 'RUS'"))
+    scored_db.commit()
+
+    def regions(w, sort):
+        return client.get("/risk", params={"week": str(WEEKS[w]), "sort": sort}).json()["regions"]
+
+    for sort in ("score", "rise", "fall"):
+        assert "RUS" not in [r["iso3"] for r in regions(70, sort)]
+
+    # Rising lists only countries that rose, falling only those that fell.
+    assert regions(60, "fall") == []
+    assert regions(70, "rise") == []
+    falling = regions(70, "fall")
+    assert [r["iso3"] for r in falling] == ["UKR"]
+    assert falling[0]["change"] <= -0.5
 
 
 def test_risk_week_is_clamped_to_the_scored_range(client, scored_db):

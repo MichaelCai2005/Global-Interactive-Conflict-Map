@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session, aliased
 
 from app import risk as scoring
@@ -25,6 +25,10 @@ router = APIRouter(tags=["risk"])
 Db = Annotated[Session, Depends(get_db)]
 
 LABELS = {"history": "History", "surge": "Surge", "spread": "Spread", "signal": "Signal"}
+# Scores show as whole points, so less than half a point is no score and no change. History
+# halves every 26 weeks but never reaches zero, so a country with one death decades ago
+# still scores a few billionths of a point.
+MIN_POINTS = 0.5
 
 
 def points(s: RiskScore) -> RiskPoints:
@@ -61,22 +65,26 @@ def risk_week(
     ] = "score",
     limit: Annotated[int, Query(ge=1, le=300)] = 300,
 ):
-    """Every country with a non-zero score in one week, for colouring the map at a point on the timeline."""
+    """Every country with a score in one week, for colouring the map at a point on the timeline.
+
+    Rising and falling keep only the countries whose score rose or fell that week.
+    """
     first, last = week_range(db)
     current = min(max(monday(week), first), last) if week else last
     previous = current - timedelta(weeks=1) if current > first else None
     prev = aliased(RiskScore)
     change = RiskScore.score - prev.score
-    order = {
-        "score": [RiskScore.score.desc()],
-        "rise": [change.desc().nulls_last(), RiskScore.score.desc()],
-        "fall": [change.asc().nulls_last(), RiskScore.score.desc()],
+    order, moved = {
+        "score": ([RiskScore.score.desc()], true()),
+        "rise": ([change.desc(), RiskScore.score.desc()], change >= MIN_POINTS),
+        "fall": ([change.asc(), RiskScore.score.desc()], change <= -MIN_POINTS),
     }[sort]
+    scored = (RiskScore.score >= MIN_POINTS) | (prev.score >= MIN_POINTS)
     rows = db.execute(
         select(RiskScore, RiskCountry, prev.score)
         .join(RiskCountry, RiskCountry.iso3 == RiskScore.iso3)
         .outerjoin(prev, (prev.iso3 == RiskScore.iso3) & (prev.week == previous))
-        .where(RiskScore.week == current, (RiskScore.score > 0) | (prev.score > 0))
+        .where(RiskScore.week == current, scored, moved)
         .order_by(*order, RiskScore.iso3)
         .limit(limit)
     ).all()
