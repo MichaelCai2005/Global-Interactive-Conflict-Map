@@ -8,6 +8,7 @@ import { riskGeoJson, useRiskWeek } from "./api/risk";
 import { MAX_POINTS, mapLayerQuery, useEvent, useFacets, useMapLayer, useTasks, useTimeline } from "./api/hooks";
 import type { Bbox, CountrySummary, WatchItem } from "./api/types";
 import { AccountMenu } from "./components/AccountMenu";
+import { BrandMark } from "./components/BrandMark";
 import { type AuthMode, AuthDialog, SignInPrompt } from "./components/AuthDialog";
 import { EventDrawer } from "./components/EventDrawer";
 import { FilterBar } from "./components/FilterBar";
@@ -30,6 +31,7 @@ import { CATEGORIES, type ColorBy, DEATH_STOPS, NO_DEATHS_COLOR } from "./lib/ca
 import { formatCount } from "./lib/format";
 import { cellSizeForZoom, parseBbox } from "./lib/geo";
 import { latestWindow } from "./lib/now";
+import { hideSplash } from "./lib/splash";
 import type { Story } from "./lib/stories";
 import { type Panel, initialState, reducer, toSearch } from "./state/dashboard";
 import { COLORS } from "./theme";
@@ -68,6 +70,10 @@ export function App() {
     }
   }, [full, state.window, state.range]);
   const timeWindow = state.window && domain ? clampWindow(state.window, domain) : null;
+  // Keep the loading screen up until the first data arrives, or the API turns out to be down.
+  useEffect(() => {
+    if (facets.data || facets.error) hideSplash();
+  }, [facets.data, facets.error]);
 
   const interval = domain ? intervalFor(domain.start, domain.end) : "month";
   const countingBbox = state.followView ? state.viewBbox : null;
@@ -255,8 +261,8 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden />
-          <h1>Conflict Map</h1>
+          <BrandMark />
+          <h1>Conflict Atlas</h1>
         </div>
         <FilterBar
           facets={facets.data}
