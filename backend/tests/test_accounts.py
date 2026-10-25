@@ -222,6 +222,7 @@ def test_changing_the_password_signs_out_other_browsers(client, settings):
     )
     assert changed.status_code == 200 and changed.json()["display_name"] == "Ana"
     assert client.get("/auth/me").json()["user"] is not None
+    client.cookies.clear()
     client.cookies.set(auth.COOKIE, other)
     assert client.get("/auth/me").json()["user"] is None
 
