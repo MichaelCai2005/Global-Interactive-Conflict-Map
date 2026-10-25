@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { App } from "./App";
 import { ApiError } from "./api/client";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { setSplashStatus } from "./lib/splash";
 import "./styles.css";
 import "./tailwind.css";
@@ -22,10 +23,12 @@ setSplashStatus("Loading conflict events");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider delayDuration={300}>
-        <App />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider delayDuration={300}>
+          <App />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );
