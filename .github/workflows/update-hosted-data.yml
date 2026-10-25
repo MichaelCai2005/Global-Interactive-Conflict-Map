@@ -38,10 +38,12 @@ jobs:
     steps:
       - name: Check for the database secret
         if: env.DATABASE_URL == ''
+        # Runs before checkout, so the default backend directory does not exist yet.
+        working-directory: .
         run: echo "::notice::HOSTED_DATABASE_URL is not set, so there is nothing to update."
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.DATABASE_URL != ''
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: env.DATABASE_URL != ''
         with:
           python-version: "3.12"
