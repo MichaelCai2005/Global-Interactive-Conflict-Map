@@ -31,6 +31,8 @@ jobs:
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      API_URL: ${{ vars.API_URL }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -39,27 +41,30 @@ jobs:
         working-directory: frontend
     steps:
       - name: Check for the API address
-        if: vars.API_URL == ''
-        # Runs before checkout, so frontend/ doesn't exist yet.
-        working-directory: .
-        run: |
-          echo "::error::Set the repository variable API_URL to the API's address (see docs/hosting.md)."
-          exit 1
+        if: env.API_URL == ''
+        run: echo "::notice::API_URL is not set, so Pages deploy is skipped (see docs/hosting.md)."
       - uses: actions/checkout@v4
+        if: env.API_URL != ''
       - uses: actions/setup-node@v4
+        if: env.API_URL != ''
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+        if: env.API_URL != ''
       - name: Build
+        if: env.API_URL != ''
         run: npx vite build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
-          VITE_API_URL: ${{ vars.API_URL }}
+          VITE_API_URL: ${{ env.API_URL }}
       - uses: actions/configure-pages@v5
+        if: env.API_URL != ''
       - uses: actions/upload-pages-artifact@v3
+        if: env.API_URL != ''
         with:
           path: frontend/dist
       - id: deploy
+        if: env.API_URL != ''
         uses: actions/deploy-pages@v4
