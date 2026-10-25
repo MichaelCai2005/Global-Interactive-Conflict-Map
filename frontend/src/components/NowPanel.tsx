@@ -128,20 +128,24 @@ export function NowPanel({ facets, filters, bbox, window, onShowLatest, onEvent,
         </section>
       )}
 
-      <ul className="freshness">
-        {facets.sources.map((s) => (
-          <li key={s.value}>
-            <strong>{sourceLabel(s.value)}</strong>
-            {s.last_date && (
-              <span>
-                {" "}
-                to {formatDate(s.last_date)} <span className="muted">({describeAge(s.last_date, today)})</span>
-              </span>
-            )}
-            {SOURCE_UPDATES[s.value] && <div className="muted small">{SOURCE_UPDATES[s.value]}</div>}
-          </li>
-        ))}
-      </ul>
+      {/* Useful, but not the first thing a newcomer needs; one click away. */}
+      <details className="freshness-details">
+        <summary className="small muted">How up to date each source is</summary>
+        <ul className="freshness">
+          {facets.sources.map((s) => (
+            <li key={s.value}>
+              <strong>{sourceLabel(s.value)}</strong>
+              {s.last_date && (
+                <span>
+                  {" "}
+                  to {formatDate(s.last_date)} <span className="muted">({describeAge(s.last_date, today)})</span>
+                </span>
+              )}
+              {SOURCE_UPDATES[s.value] && <div className="muted small">{SOURCE_UPDATES[s.value]}</div>}
+            </li>
+          ))}
+        </ul>
+      </details>
 
       <div className="stat-grid">
         <Stat label="Violent events" kind="violent" now={current.data} then={before.data} pick={(s) => s.violent_events} />

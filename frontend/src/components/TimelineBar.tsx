@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Interval, TimelineBucket } from "../api/types";
 import { type DateWindow, addDays, clampWindow, daysBetween, formatRange } from "../lib/dates";
+import { useStoredFlag } from "../lib/storage";
 import { Timeline, TimelineTable } from "./Timeline";
 import { CloseButton } from "./Workspace";
 
@@ -40,6 +41,12 @@ export function TimelineBar(props: Props) {
   const length = daysBetween(window.start, window.end) + 1;
   const isFull = domain.start === full.start && domain.end === full.end;
   const atLatest = window.end === full.end;
+  // The less used controls wait behind More until wanted (remembered per browser). They show
+  // whenever one is away from its default, so nothing in force is hidden, and the speed shows
+  // while playing.
+  const [more, setMore] = useStoredFlag("conflict-map:timeline-more");
+  const changed = !props.followView || table;
+  const showMore = more || changed;
 
   const setLength = (days: number) =>
     props.onWindow(clampWindow({ start: window.start, end: addDays(window.start, days - 1) }, domain));
@@ -63,17 +70,19 @@ export function TimelineBar(props: Props) {
         >
           {props.playing ? "❚❚" : "▶"}
         </button>
-        <select
-          value={props.speed}
-          onChange={(e) => props.onSpeed(Number(e.target.value))}
-          aria-label="Playback speed"
-        >
-          {SPEEDS.map((s) => (
-            <option key={s} value={s}>
-              {s}×
-            </option>
-          ))}
-        </select>
+        {(showMore || props.playing) && (
+          <select
+            value={props.speed}
+            onChange={(e) => props.onSpeed(Number(e.target.value))}
+            aria-label="Playback speed"
+          >
+            {SPEEDS.map((s) => (
+              <option key={s} value={s}>
+                {s}×
+              </option>
+            ))}
+          </select>
+        )}
         <strong className="window-label">{formatRange(window)}</strong>
         <div className="segmented small" role="group" aria-label="Window length">
           {LENGTHS.map((l) => (
@@ -91,37 +100,46 @@ export function TimelineBar(props: Props) {
           <span className="live-dot" aria-hidden /> Latest
         </button>
         <span className="spacer" />
-        <div className="segmented small" role="radiogroup" aria-label="Timeline counts" data-tour="follow">
-          <button
-            role="radio"
-            aria-checked={props.followView}
-            className={props.followView ? "is-on" : ""}
-            onClick={() => props.onFollowView(true)}
-            title="Timeline and totals count only events in the map view"
-          >
-            {props.zoomedIn ? "Map view" : "Map view (world)"}
-          </button>
-          <button
-            role="radio"
-            aria-checked={!props.followView}
-            className={!props.followView ? "is-on" : ""}
-            onClick={() => props.onFollowView(false)}
-          >
-            Everywhere
-          </button>
-        </div>
-        {isFull ? (
-          <button className="ghost small" onClick={zoomToWindow} title="Zoom the timeline in around the window">
-            Zoom timeline
-          </button>
-        ) : (
-          <button className="ghost small" onClick={() => props.onRange(null)}>
-            Full range
+        {showMore && (
+          <>
+            <div className="segmented small" role="radiogroup" aria-label="Timeline counts" data-tour="follow">
+              <button
+                role="radio"
+                aria-checked={props.followView}
+                className={props.followView ? "is-on" : ""}
+                onClick={() => props.onFollowView(true)}
+                title="Timeline and totals count only events in the map view"
+              >
+                {props.zoomedIn ? "Map view" : "Map view (world)"}
+              </button>
+              <button
+                role="radio"
+                aria-checked={!props.followView}
+                className={!props.followView ? "is-on" : ""}
+                onClick={() => props.onFollowView(false)}
+              >
+                Everywhere
+              </button>
+            </div>
+            {isFull ? (
+              <button className="ghost small" onClick={zoomToWindow} title="Zoom the timeline in around the window">
+                Zoom timeline
+              </button>
+            ) : (
+              <button className="ghost small" onClick={() => props.onRange(null)}>
+                Full range
+              </button>
+            )}
+            <button className="ghost small" onClick={() => setTable(!table)} aria-pressed={table}>
+              {table ? "Chart" : "Table"}
+            </button>
+          </>
+        )}
+        {!changed && (
+          <button className="link-button small more-toggle" aria-expanded={more} onClick={() => setMore(!more)}>
+            {more ? "Fewer options" : "More options"}
           </button>
         )}
-        <button className="ghost small" onClick={() => setTable(!table)} aria-pressed={table}>
-          {table ? "Chart" : "Table"}
-        </button>
         {props.onClose && <CloseButton label="Close timeline" onClick={props.onClose} />}
       </div>
       {table ? (

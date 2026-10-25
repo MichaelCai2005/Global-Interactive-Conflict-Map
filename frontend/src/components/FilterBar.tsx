@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Facets } from "../api/types";
 import { CATEGORIES, eventCategory } from "../lib/categories";
 import { SOURCE_DESCRIPTIONS, eventTypeLabel, formatCount, sourceLabel } from "../lib/format";
+import { useStoredFlag } from "../lib/storage";
 import { EMPTY_FILTERS, type Filters, type Violence } from "../state/dashboard";
 
 interface Props {
@@ -25,6 +26,10 @@ export function FilterBar({ facets, filters, onChange, onClear }: Props) {
   const active = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  // Sources and event types wait behind More filters until wanted (remembered per browser).
+  // They show whenever one is set, so no filter in force is ever hidden.
+  const [more, setMore] = useStoredFlag("conflict-map:more-filters");
+  const advanced = filters.sources.length > 0 || filters.types.length > 0;
 
   return (
     <div className="filter-bar" role="toolbar" aria-label="Filters" data-tour="filters">
@@ -44,22 +49,36 @@ export function FilterBar({ facets, filters, onChange, onClear }: Props) {
         ))}
       </div>
 
-      <div className="chips" aria-label="Sources">
-        {facets?.sources.map((s) => (
-          <button
-            key={s.value}
-            className={`chip${filters.sources.includes(s.value) ? " is-on" : ""}`}
-            aria-pressed={filters.sources.includes(s.value)}
-            title={`${SOURCE_DESCRIPTIONS[s.value] ?? ""} (${formatCount(s.count)} events)`}
-            onClick={() => onChange({ sources: toggle(filters.sources, s.value) })}
-          >
-            {sourceLabel(s.value)}
-          </button>
-        ))}
-      </div>
-
-      <TypePicker facets={facets} filters={filters} onChange={onChange} />
       <CountryPicker facets={facets} value={filters.country} onChange={(country) => onChange({ country })} />
+
+      {(more || advanced) && (
+        <>
+          <div className="chips" aria-label="Sources">
+            {facets?.sources.map((s) => (
+              <button
+                key={s.value}
+                className={`chip${filters.sources.includes(s.value) ? " is-on" : ""}`}
+                aria-pressed={filters.sources.includes(s.value)}
+                title={`${SOURCE_DESCRIPTIONS[s.value] ?? ""} (${formatCount(s.count)} events)`}
+                onClick={() => onChange({ sources: toggle(filters.sources, s.value) })}
+              >
+                {sourceLabel(s.value)}
+              </button>
+            ))}
+          </div>
+          <TypePicker facets={facets} filters={filters} onChange={onChange} />
+        </>
+      )}
+      {!advanced && (
+        <button
+          className="link-button more-toggle"
+          aria-expanded={more}
+          aria-label={more ? "Fewer filters" : "More filters"}
+          onClick={() => setMore(!more)}
+        >
+          {more ? "Fewer" : "More filters"}
+        </button>
+      )}
 
       {active && (
         <button className="link-button" onClick={onClear}>

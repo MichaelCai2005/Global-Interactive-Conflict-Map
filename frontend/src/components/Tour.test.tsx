@@ -44,6 +44,20 @@ describe("Tour", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("as a single pointer, closes when the control it points at is pressed", async () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <button data-tour="tab-risk">Risk</button>
+        <Tour steps={[{ target: "tab-risk", title: "Risk", body: <p>Scores</p> }]} startPanel="now" onPanel={() => {}} onClose={onClose} />
+      </>,
+    );
+    expect(screen.queryByText(/Step 1/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Got it" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Risk" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("can be skipped from any step", async () => {
     const onClose = vi.fn();
     render(<Tour startPanel="now" onPanel={() => {}} onClose={onClose} />);

@@ -22,12 +22,15 @@ import { WatchlistPanel } from "./components/WatchlistPanel";
 import { type BoardNode, useBoard, useBoardGeoJson } from "./board/api";
 import { BoardCanvas, type BoardSelection, type CanvasHandle } from "./board/BoardCanvas";
 import { BoardPanel } from "./board/BoardPanel";
+import { ThingsToTry } from "./components/ThingsToTry";
 import { Tour } from "./components/Tour";
 import { Welcome } from "./components/Welcome";
 import { NowPanel } from "./components/NowPanel";
 import { CloseButton, PaneToggles, Workspace, usePanes } from "./components/Workspace";
 import { type DateWindow, clampWindow, daysBetween, formatDate, intervalFor, shiftWindow, stepFor } from "./lib/dates";
 import { CATEGORIES, type ColorBy, DEATH_STOPS, NO_DEATHS_COLOR } from "./lib/categories";
+import { DISCOVERIES, type DiscoveryItem, useDiscoveries } from "./lib/discover";
+import { useStoredFlag } from "./lib/storage";
 import { formatCount } from "./lib/format";
 import { cellSizeForZoom, parseBbox } from "./lib/geo";
 import { latestWindow } from "./lib/now";
@@ -39,6 +42,7 @@ import { COLORS } from "./theme";
 const WELCOME_KEY = "conflict-map:welcome-seen";
 const COLOR_BY_KEY = "conflict-map:color-by";
 const WORLD: Bbox = [-150, -50, 170, 70];
+const ACCOUNT_PANELS: readonly Panel[] = ["watchlist", "tasks", "saved"];
 
 type BoardView = "board" | "split" | "map";
 
@@ -54,6 +58,21 @@ export function App() {
   const me = useMe().data;
   const canSave = me !== undefined && me.workspace !== null;
   const [auth, setAuth] = useState<AuthMode | null>(null);
+  // Things to try: the rest of the app, one feature at a time. Each is ticked off on first use.
+  const discover = useDiscoveries();
+  const [thingsHidden, setThingsHidden] = useStoredFlag("conflict-map:things-hidden");
+  const [hint, setHint] = useState<DiscoveryItem | null>(null);
+  // Accounts can't be suggested while sign-ups are closed to someone who has none.
+  const things = DISCOVERIES.filter((d) => d.key !== "account" || me?.user || me?.signups_open);
+  useEffect(() => {
+    if (state.selectedEventId !== null) discover.mark("event");
+  }, [state.selectedEventId, discover.mark]);
+  useEffect(() => {
+    if (state.panel === "risk" || state.panel === "board") discover.mark(state.panel);
+  }, [state.panel, discover.mark]);
+  useEffect(() => {
+    if (me?.user) discover.mark("account");
+  }, [me?.user, discover.mark]);
 
   const full = useMemo<DateWindow | null>(() => {
     const { first_date, last_date } = facets.data ?? {};
@@ -212,6 +231,7 @@ export function App() {
 
   const startStory = (story: Story) => {
     closeWelcome();
+    discover.mark("story");
     dispatch({ type: "story", range: story.range, windowDays: story.windowDays });
     map.current?.fitBbox(story.bbox);
   };
@@ -268,7 +288,10 @@ export function App() {
         <FilterBar
           facets={facets.data}
           filters={state.filters}
-          onChange={(filters) => dispatch({ type: "filters", filters })}
+          onChange={(filters) => {
+            discover.mark("filters");
+            dispatch({ type: "filters", filters });
+          }}
           onClear={() => dispatch({ type: "clearFilters" })}
         />
         <PaneToggles panes={panes} />
@@ -294,18 +317,22 @@ export function App() {
                     ["tasks", openTasks ? `Tasks (${openTasks})` : "Tasks"],
                     ["saved", "Saved"],
                   ] as const
-                ).map(([panel, label]) => (
-                  <button
-                    key={panel}
-                    data-tour={`tab-${panel}`}
-                    role="tab"
-                    aria-selected={state.panel === panel}
-                    className={state.panel === panel ? "is-on" : ""}
-                    onClick={() => setPanel(panel)}
-                  >
-                    {label}
-                  </button>
-                ))}
+                )
+                  // Tabs that keep work need an account; until then they would only ask
+                  // visitors to sign in, so they stay out of the way (a shared link still opens them).
+                  .filter(([panel]) => canSave || !ACCOUNT_PANELS.includes(panel) || state.panel === panel)
+                  .map(([panel, label]) => (
+                    <button
+                      key={panel}
+                      data-tour={`tab-${panel}`}
+                      role="tab"
+                      aria-selected={state.panel === panel}
+                      className={state.panel === panel ? "is-on" : ""}
+                      onClick={() => setPanel(panel)}
+                    >
+                      {label}
+                    </button>
+                  ))}
               </nav>
               {panes.wide && <CloseButton label="Close side panel" onClick={() => panes.sidebar.toggle(false)} />}
             </div>
@@ -494,6 +521,14 @@ export function App() {
                       />
                     </>
                   )}
+                  {!thingsHidden && state.selectedEventId === null && (
+                    <ThingsToTry
+                      items={things}
+                      done={discover.done}
+                      onShow={setHint}
+                      onHide={() => setThingsHidden(true)}
+                    />
+                  )}
                   {state.selectedEventId !== null && (
                     <EventDrawer
                       eventId={state.selectedEventId}
@@ -521,9 +556,15 @@ export function App() {
                 speed={state.speed}
                 followView={state.followView}
                 zoomedIn={state.viewBbox !== null}
-                onWindow={(w) => dispatch({ type: "window", window: w })}
+                onWindow={(w) => {
+                  discover.mark("time");
+                  dispatch({ type: "window", window: w });
+                }}
                 onRange={(range) => dispatch({ type: "range", range })}
-                onPlay={play}
+                onPlay={(playing) => {
+                  discover.mark("time");
+                  play(playing);
+                }}
                 onSpeed={(speed) => dispatch({ type: "speed", speed })}
                 onFollowView={(followView) => dispatch({ type: "followView", followView })}
                 onLatest={() => showLatest()}
@@ -537,9 +578,31 @@ export function App() {
       />
 
       {welcome && (
-        <Welcome facets={facets.data} onTour={startTour} onNow={startNow} onStory={startStory} onClose={closeWelcome} />
+        <Welcome
+          facets={facets.data}
+          onTour={startTour}
+          onNow={startNow}
+          onStory={startStory}
+          onThingsToTry={
+            thingsHidden
+              ? () => {
+                  closeWelcome();
+                  setThingsHidden(false);
+                }
+              : undefined
+          }
+          onClose={closeWelcome}
+        />
       )}
       {tour && <Tour startPanel={tour} onPanel={setPanel} onClose={() => setTour(null)} />}
+      {hint && (
+        <Tour
+          steps={[{ target: hint.target, title: hint.title, body: <p>{hint.hint}</p> }]}
+          startPanel={state.panel}
+          onPanel={setPanel}
+          onClose={() => setHint(null)}
+        />
+      )}
       {auth && <AuthDialog mode={auth} signupsOpen={me?.signups_open ?? true} onClose={() => setAuth(null)} />}
     </div>
   );

@@ -257,11 +257,17 @@ What it does:
   them into single events.
 - **Timeline**: violent events, signal events and deaths over time, each on its own scale.
   Drag the window to move it, drag its edges to resize it, click elsewhere to jump, or
-  use the arrow keys (Shift resizes). Play steps the window forward. The timeline counts
-  only the map view unless set to "Everywhere"; "Zoom timeline" narrows it around the
-  window. A table view shows the same numbers.
-- **Filters**: violence or signals, sources, event types and country. They apply to
-  everything on the page. The URL keeps the whole view, so a link reopens it.
+  use the arrow keys (Shift resizes). Play steps the window forward. Under "More options",
+  the timeline can count everywhere instead of only the map view, "Zoom timeline"
+  narrows it around the window, and a table view shows the same numbers.
+- **Filters**: violence or signals, and country; sources and event types are under "More
+  filters". They apply to everything on the page. The URL keeps the whole view, so a
+  link reopens it.
+- **Getting started**: a short welcome and a six-step tour cover the essentials only.
+  "Things to try" over the map then suggests one feature at a time (open an event, move
+  through time, filters, risk, stories, boards, an account) and ticks each off on first
+  use. Less used controls wait behind "More" toggles that stay open once opened. Watchlist,
+  Tasks and Saved tabs appear once there is an account to keep them.
 - **Overview**: totals for the window compared with the window before it, the deadliest
   events, and the busiest countries (click one to filter and zoom to it).
 - **Event details**: click a point for its date, place, actors, deaths and source, plus

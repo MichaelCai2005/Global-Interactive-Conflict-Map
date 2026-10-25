@@ -25,7 +25,7 @@ export const TOUR_STEPS: TourStep[] = [
           <strong>violence</strong> that happened, and <span className="dot dot-signals" aria-hidden />{" "}
           <strong>signals</strong> around it, like protests, threats and troop movements.
         </p>
-        <p>Here are the controls you'll use most. Use the arrow keys or the buttons below to move through them.</p>
+        <p>Here are the four things you'll use most. The rest can wait until you want it.</p>
       </>
     ),
   },
@@ -35,23 +35,13 @@ export const TOUR_STEPS: TourStep[] = [
     body: (
       <>
         <p>
-          Each dot is an event. Bigger dots had more deaths, and dots fade the earlier they fall in the time window.
+          Each dot is an event. Bigger dots had more deaths, and the legend in the corner explains the colours.
         </p>
         <p>
-          Scroll or pinch to zoom. Where there are too many events to draw one by one, they're grouped into circles
-          until you zoom in. <strong>Click a dot</strong> to see what happened and the news reports about it.
+          Scroll or pinch to zoom in on a region. <strong>Click a dot</strong> to see what happened and the news
+          reports about it.
         </p>
       </>
-    ),
-  },
-  {
-    target: "legend",
-    title: "Reading the map",
-    body: (
-      <p>
-        The legend explains the colours and sizes in the current view, and changes when the map does. Its buttons
-        switch what the colours mean, such as the type of event or the number of deaths.
-      </p>
     ),
   },
   {
@@ -60,34 +50,14 @@ export const TOUR_STEPS: TourStep[] = [
     body: (
       <>
         <p>
-          The bars count events over time. The highlighted <strong>window</strong> is the stretch of time the map
-          shows. Drag it to move through time, or drag its edges to make it longer or shorter.
+          The highlighted <strong>window</strong> is the stretch of time the map shows. Drag it to move through time,
+          or press <strong>play</strong> to watch events unfold.
         </p>
         <p>
-          <strong>1W, 1M, 3M, 1Y</strong> set the window's length, and <strong>Latest</strong> jumps to the newest
-          data.
+          <strong>1W, 1M, 3M, 1Y</strong> set the window's length, and <strong>Latest</strong> jumps back to the
+          newest data.
         </p>
       </>
-    ),
-  },
-  {
-    target: "play",
-    title: "Play it forward",
-    body: (
-      <p>
-        Press play to move the window forward step by step and watch a conflict spread or die down. The menu next to
-        it sets the speed.
-      </p>
-    ),
-  },
-  {
-    target: "follow",
-    title: "Here, or everywhere",
-    body: (
-      <p>
-        With <strong>Map view</strong> on, the timeline and the totals only count what's on screen, so zooming into
-        a region shows that region's history. <strong>Everywhere</strong> counts the whole world.
-      </p>
     ),
   },
   {
@@ -95,8 +65,8 @@ export const TOUR_STEPS: TourStep[] = [
     title: "Choose what to show",
     body: (
       <p>
-        Show only violence or only signals, pick which data sources to use, narrow it down to some event types, or
-        pick one country. <strong>Clear</strong> resets everything.
+        Show only violence or only signals, or pick one country. <strong>More filters</strong> chooses data sources
+        and event types.
       </p>
     ),
   },
@@ -106,54 +76,22 @@ export const TOUR_STEPS: TourStep[] = [
     title: "What's happening now",
     body: (
       <p>
-        The <strong>Now</strong> tab shows the latest week: the deadliest recent fighting, the most reported events,
-        and countries where risk is rising. Click anything to fly the map to it. <strong>Overview</strong> gives the
-        same kind of totals for whatever window and area you've picked.
+        The <strong>Now</strong> tab shows the latest week: the news, the deadliest recent fighting, and countries
+        where risk is rising. Click anything to fly the map to it.
       </p>
     ),
   },
   {
-    target: "map",
-    panel: "risk",
-    title: "Risk scores",
-    body: (
-      <p>
-        On the <strong>Risk</strong> tab the map shows each country's risk score for the week instead of events.
-        Brighter and larger means a higher score, and a ring marks a sudden surge. Click a country to see why it
-        scored what it did.
-      </p>
-    ),
-  },
-  {
-    target: "tab-board",
-    title: "Link boards",
-    body: (
-      <p>
-        <strong>Boards</strong> are pin-boards for research: collect events, links and notes, connect them, and see
-        them on the map next to each other.
-      </p>
-    ),
-  },
-  {
-    target: "account",
-    title: "Keep your work",
-    body: (
-      <p>
-        Make a free account to keep a <strong>Watchlist</strong> of places, a list of <strong>Tasks</strong> to follow
-        up on, and <strong>Saved</strong> views and boards. Looking around never needs one.
-      </p>
-    ),
-  },
-  {
-    target: "help",
-    title: "That's it",
+    target: "discover",
+    title: "Find the rest at your own pace",
     body: (
       <>
         <p>
-          The address bar always holds the view you're looking at, so you can copy it to share exactly what you see.
+          <strong>Things to try</strong> suggests one new thing at a time, such as risk scores, replays of past
+          conflicts and research boards. It ticks each one off as you use it.
         </p>
         <p>
-          <strong>Stories &amp; help</strong> brings back this tour and guided stories of past conflicts.
+          <strong>Stories &amp; help</strong> brings back this tour.
         </p>
       </>
     ),
@@ -212,6 +150,18 @@ export function Tour({ steps = TOUR_STEPS, startPanel, onPanel, onClose }: Props
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // A single step points at one control, so using that control is the answer: pressing it
+  // closes the pointer and lets the press through.
+  const pointer = steps.length === 1 ? step.target : undefined;
+  useEffect(() => {
+    if (!pointer) return;
+    const onPress = (e: PointerEvent) => {
+      if (document.querySelector(`[data-tour="${pointer}"]`)?.contains(e.target as Node)) close();
+    };
+    window.addEventListener("pointerdown", onPress, true);
+    return () => window.removeEventListener("pointerdown", onPress, true);
+  });
+
   // Move focus to the card so screen readers announce each step.
   useLayoutEffect(() => {
     card.current?.focus({ preventScroll: true });
@@ -238,20 +188,25 @@ export function Tour({ steps = TOUR_STEPS, startPanel, onPanel, onClose }: Props
         tabIndex={-1}
         style={{ ...position, width: Math.min(CARD_WIDTH, viewport.width - 32) }}
       >
-        <div className="tour-progress small muted">
-          Step {index + 1} of {steps.length}
-          <span className="tour-dots" aria-hidden>
-            {steps.map((_, i) => (
-              <span key={i} className={i === index ? "is-on" : i < index ? "is-done" : ""} />
-            ))}
-          </span>
-        </div>
+        {/* A single step is a pointer at one control, not a tour. */}
+        {steps.length > 1 && (
+          <div className="tour-progress small muted">
+            Step {index + 1} of {steps.length}
+            <span className="tour-dots" aria-hidden>
+              {steps.map((_, i) => (
+                <span key={i} className={i === index ? "is-on" : i < index ? "is-done" : ""} />
+              ))}
+            </span>
+          </div>
+        )}
         <h2 id="tour-title">{step.title}</h2>
         <div className="tour-body">{step.body}</div>
         <div className="tour-actions">
-          <button className="link-button small" onClick={close}>
-            {last ? "Close" : "Skip tour"}
-          </button>
+          {steps.length > 1 && (
+            <button className="link-button small" onClick={close}>
+              {last ? "Close" : "Skip tour"}
+            </button>
+          )}
           <span className="spacer" />
           {index > 0 && (
             <button className="ghost" onClick={back}>
@@ -259,7 +214,7 @@ export function Tour({ steps = TOUR_STEPS, startPanel, onPanel, onClose }: Props
             </button>
           )}
           <button className="primary" onClick={next}>
-            {last ? "Finish" : index === 0 ? "Start" : "Next"}
+            {steps.length === 1 ? "Got it" : last ? "Finish" : index === 0 ? "Start" : "Next"}
           </button>
         </div>
       </div>
