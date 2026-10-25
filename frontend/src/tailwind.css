@@ -1,0 +1,46 @@
+/* Tailwind, for the shadcn/ui components in src/components/ui only.
+
+   The rest of the app is styled by plain CSS (styles.css and the files beside components),
+   so Tailwind is loaded without its preflight reset, generates utilities only from the
+   shadcn folder, and marks them !important so they win over the app's element rules
+   (button, input) that would otherwise beat a layered utility. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) important source(none);
+@source "./components/ui";
+
+/* shadcn's color names, mapped onto the app's palette in styles.css. */
+@theme inline {
+  --color-background: var(--page);
+  --color-foreground: var(--ink);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--surface-2);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #fff;
+  --color-secondary: var(--surface-3);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--surface-3);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: var(--critical);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* The part of preflight shadcn relies on, kept to its own elements. */
+[data-slot] {
+  border: 0 solid var(--border);
+}
+
+button[data-slot] {
+  background: transparent;
+  padding: 0;
+}

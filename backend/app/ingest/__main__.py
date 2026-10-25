@@ -1,6 +1,7 @@
 """Command line entry point.
 
 python -m app.ingest download gdelt --start 2022-02-01 --end 2022-02-28
+python -m app.ingest live
 python -m app.ingest download ucdp --version 26.1
 python -m app.ingest download ucdp-candidate --start-year 2026
 python -m app.ingest download acled --start-year 2018 --end-year 2024 --country Ukraine
@@ -14,6 +15,7 @@ python -m app.ingest load wdi data/wdi/wdi-1989-2025.csv
 python -m app.ingest load epr data/epr/EPR-2021.csv
 python -m app.ingest load vdem V-Dem-CY-Core-v16.csv
 python -m app.ingest build-features --start 2022-01 --end 2022-12
+python -m app.ingest prune-gdelt-ids --days 30
 """
 
 import argparse
@@ -26,7 +28,7 @@ from app.config import get_settings
 from app.db import session_factory
 from app.features import build_cell_months
 from app.ingest import download
-from app.ingest.loader import SOURCES, ingest_file
+from app.ingest.loader import SOURCES, ingest_file, load_gdelt_live, prune_gdelt_ids
 
 
 def _month(value: str) -> date:
@@ -55,6 +57,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     fetch.add_argument("--out", type=Path, default=Path("data"))
 
+    live = commands.add_parser(
+        "live", help="download and load GDELT 2.0's 15-minute files posted since the last load"
+    )
+    live.add_argument(
+        "--max-files", type=int, default=96, help="at most this many quarter hours (default: a day)"
+    )
+    live.add_argument("--out", type=Path, default=Path("data"))
+
+    prune = commands.add_parser(
+        "prune-gdelt-ids", help="stop adding newly found articles to old GDELT events"
+    )
+    prune.add_argument("--days", type=int, default=30)
+
     build = commands.add_parser(
         "build-features", help="rebuild cell-month features from the loaded events"
     )
@@ -67,6 +82,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build-features":
         with session_factory()() as session:
             build_cell_months(session, args.start, args.end or args.start)
+        return 0
+
+    if args.command == "live":
+        with session_factory()() as session:
+            return 0 if load_gdelt_live(session, args.out, args.max_files) else 1
+
+    if args.command == "prune-gdelt-ids":
+        with session_factory()() as session:
+            logging.info("forgot %d GDELT ids", prune_gdelt_ids(session, args.days))
         return 0
 
     if args.command == "download":

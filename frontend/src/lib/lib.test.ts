@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { axisTicks } from "../components/Timeline";
 import { initialState, reducer, toSearch } from "../state/dashboard";
+import { eventCategory } from "./categories";
 import {
   addDays,
   clampWindow,
@@ -13,8 +14,18 @@ import {
   stepFor,
   toDay,
 } from "./dates";
-import { formatChange, percentChange } from "./format";
+import { formatChange, percentChange, placeLabel } from "./format";
 import { cellSizeForZoom, parseBbox, viewBbox } from "./geo";
+import {
+  deathsThrough,
+  describeAge,
+  describeTimeAgo,
+  headlineFromUrl,
+  lastWholeWeek,
+  latestWindow,
+  oneEachStory,
+  reportedSince,
+} from "./now";
 
 describe("dates", () => {
   it("counts days from 1970 like the API does", () => {
@@ -142,11 +153,137 @@ describe("dashboard state", () => {
     expect(state.camera.zoom).toBeGreaterThan(0);
   });
 
+  it("opens a plain visit on the Now tab, and a link without a panel on the overview", () => {
+    expect(initialState("").panel).toBe("now");
+    expect(initialState("?country=Syria").panel).toBe("overview");
+    expect(initialState("?panel=now&country=Syria").panel).toBe("now");
+  });
+
   it("starts a story with a cleared filter set and playback on", () => {
     let state = initialState("?country=Syria");
     state = reducer(state, { type: "story", range: { start: "2022-01-01", end: "2022-12-31" }, windowDays: 14 });
     expect(state.filters.country).toBeNull();
     expect(state.window).toEqual({ start: "2022-01-01", end: "2022-01-14" });
     expect(state.playing).toBe(true);
+  });
+});
+
+describe("now", () => {
+  const sources = [
+    { value: "gdelt", count: 9, first_date: "2012-02-27", last_date: "2026-10-23" },
+    { value: "ucdp", count: 5, first_date: "1989-01-01", last_date: "2026-09-30" },
+    { value: "acled", count: 3, first_date: "2018-01-01", last_date: "2022-12-31" },
+  ];
+
+  it("takes the newest days of data, not the days up to today", () => {
+    expect(latestWindow("2026-10-23", 7)).toEqual({ start: "2026-10-17", end: "2026-10-23" });
+    expect(latestWindow("2026-10-23", 1)).toEqual({ start: "2026-10-23", end: "2026-10-23" });
+  });
+
+  it("finds the newest death counts among the sources the filters allow", () => {
+    expect(deathsThrough(sources, [])).toBe("2026-09-30");
+    expect(deathsThrough(sources, ["acled", "gdelt"])).toBe("2022-12-31");
+    expect(deathsThrough(sources, ["gdelt"])).toBeNull();
+  });
+
+  it("says how long ago a date was", () => {
+    expect(describeAge("2026-10-24", "2026-10-24")).toBe("today");
+    expect(describeAge("2026-10-23", "2026-10-24")).toBe("yesterday");
+    expect(describeAge("2026-10-19", "2026-10-24")).toBe("5 days ago");
+    expect(describeAge("2026-09-30", "2026-10-24")).toBe("3 weeks ago");
+    expect(describeAge("2022-12-31", "2026-10-24")).toBe("4 years ago");
+  });
+
+  it("ends the newest whole week on a Sunday", () => {
+    expect(lastWholeWeek("2026-10-23")).toBe("2026-10-18"); // a Friday
+    expect(lastWholeWeek("2026-09-27")).toBe("2026-09-27"); // a Sunday
+  });
+
+  it("reads a headline out of a news link", () => {
+    expect(
+      headlineFromUrl("https://www.cp24.com/news/canada/2026/10/18/fatalities-and-injuries-reported-after-incident/"),
+    ).toBe("Fatalities and injuries reported after incident");
+    expect(headlineFromUrl("https://www.mirror.co.uk/news/world-news/paris-shooting-trappes-police-dead-37803230")).toBe(
+      "Paris shooting trappes police dead",
+    );
+    expect(headlineFromUrl("https://www.heraldseries.co.uk/news/26667668.musk-speaks-starlink-service-ukraine/")).toBe(
+      "Musk speaks starlink service ukraine",
+    );
+    expect(headlineFromUrl("https://www.kyivpost.com/post/87476")).toBeNull();
+    expect(headlineFromUrl("not a link")).toBeNull();
+  });
+
+  it("names a place without repeating its country", () => {
+    expect(placeLabel("Kyiv, Kyyiv, Misto, Ukraine", "Ukraine")).toBe("Kyiv, Kyyiv, Misto, Ukraine");
+    expect(placeLabel("Jabal Qarfan mountain", "Yemen")).toBe("Jabal Qarfan mountain, Yemen");
+    expect(placeLabel(null, "Yemen")).toBe("Yemen");
+  });
+});
+
+describe("news in the last hours", () => {
+  const now = Date.parse("2026-10-24T15:07:30Z");
+
+  it("counts back from the last quarter hour", () => {
+    expect(reportedSince(24, now)).toBe("2026-10-23T15:00:00.000Z");
+    expect(reportedSince(72, now)).toBe("2026-10-21T15:00:00.000Z");
+  });
+
+  it("says how long ago a report was", () => {
+    expect(describeTimeAgo("2026-10-24T15:00:00Z", now)).toBe("just now");
+    expect(describeTimeAgo("2026-10-24T14:15:00Z", now)).toBe("53 min ago");
+    expect(describeTimeAgo("2026-10-24T10:00:00Z", now)).toBe("5 h ago");
+    expect(describeTimeAgo("2026-10-21T15:00:00Z", now)).toBe("3 days ago");
+  });
+});
+
+describe("eventCategory", () => {
+  it("folds each source's types into the same kinds of violence", () => {
+    expect(eventCategory("state_based", true).key).toBe("state");
+    expect(eventCategory("battle", true).key).toBe("state");
+    expect(eventCategory("non_state", true).key).toBe("non_state");
+    expect(eventCategory("one_sided", true).key).toBe("civilians");
+    expect(eventCategory("violence_against_civilians", true).key).toBe("civilians");
+    expect(eventCategory("mass_violence", true).key).toBe("civilians");
+  });
+
+  it("calls every non-violent event a signal, and unknown violence military", () => {
+    expect(eventCategory("protest", false).key).toBe("signal");
+    expect(eventCategory("riot", false).key).toBe("signal");
+    expect(eventCategory("unknown", true).key).toBe("state");
+  });
+});
+
+describe("oneEachStory", () => {
+  const event = (id: number, over: Partial<Parameters<typeof oneEachStory>[0][0]> = {}) => ({
+    id,
+    event_date: "2026-10-18",
+    country: "Canada",
+    latitude: 53.28,
+    longitude: -110.0,
+    geo_precision: "exact" as const,
+    source_url: `https://news.example/${id}`,
+    ...over,
+  });
+
+  it("keeps one line per incident however GDELT placed it", () => {
+    const kept = oneEachStory([
+      event(1), // the base fire, at the town
+      event(2, { latitude: 60.1, longitude: -113.6, geo_precision: "country" }), // all of Canada
+      event(3, { latitude: 53.7, longitude: -106.0, geo_precision: "admin" }), // the province
+      event(4, { latitude: 49.25, longitude: -123.1 }), // Vancouver, 900 km away
+      event(5, { event_date: "2026-10-19" }), // the next day
+      event(6, { country: "France", latitude: 48.78, longitude: 2.0 }),
+    ]);
+    expect(kept.map((e) => e.id)).toEqual([1, 4, 5, 6]);
+  });
+
+  it("treats a shared article or headline as one story anywhere", () => {
+    const kept = oneEachStory([
+      event(1, { source_url: "https://a.example/2026/10/23/gunman-kills-one-in-paris-suburb" }),
+      event(2, { country: "France", source_url: "https://b.example/news/gunman-kills-one-in-paris-suburb/" }),
+      event(3, { country: "France", source_url: "https://a.example/2026/10/23/gunman-kills-one-in-paris-suburb" }),
+      event(4, { country: "France", source_url: null }),
+    ]);
+    expect(kept.map((e) => e.id)).toEqual([1, 4]);
   });
 });

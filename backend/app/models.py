@@ -87,6 +87,8 @@ class Event(Base):
     source_url: Mapped[str | None] = mapped_column(Text)
     conflict_id: Mapped[str | None] = mapped_column(String(64), index=True)
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # When GDELT first published the event, to the quarter hour; empty for other sources.
+    first_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duplicate_of_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("events.id", ondelete="SET NULL"), index=True
     )
@@ -108,6 +110,31 @@ class EventLink(Base):
     distance_km: Mapped[float] = mapped_column(Float)
     day_gap: Mapped[int] = mapped_column(Integer)
     score: Mapped[float] = mapped_column(Float)
+
+
+class GdeltId(Base):
+    """Which event a GDELT GLOBALEVENTID went into, so its Mentions can find it."""
+
+    __tablename__ = "gdelt_ids"
+
+    global_event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    event_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("events.id", ondelete="CASCADE"), index=True
+    )
+
+
+class EventSource(Base):
+    """One news article that reported an event."""
+
+    __tablename__ = "event_sources"
+    __table_args__ = (UniqueConstraint("event_id", "url", name="uq_event_sources_event_url"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    event_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("events.id", ondelete="CASCADE"))
+    url: Mapped[str] = mapped_column(Text)
+    source_name: Mapped[str | None] = mapped_column(Text)
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confidence: Mapped[int | None] = mapped_column(SmallInteger)
 
 
 class CountryIndicator(Base):

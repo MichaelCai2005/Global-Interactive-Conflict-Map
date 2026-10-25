@@ -31,6 +31,12 @@ function humanize(value: string): string {
 
 const SOURCE_LABELS: Record<string, string> = { ucdp: "UCDP", acled: "ACLED", gdelt: "GDELT" };
 
+/** Place and country, without repeating the country when the place name already ends in it. */
+export function placeLabel(location: string | null, country: string | null): string {
+  if (location && country && location.endsWith(country)) return location;
+  return [location, country].filter(Boolean).join(", ");
+}
+
 export function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] ?? source.toUpperCase();
 }
@@ -39,6 +45,13 @@ export const SOURCE_DESCRIPTIONS: Record<string, string> = {
   ucdp: "Hand-coded organized violence with at least one death",
   acled: "Hand-coded political violence, protests and strategic developments",
   gdelt: "Machine-coded news events; signals before and around violence",
+};
+
+/** How often each source gets new events (see .github/workflows/update-*.yml). */
+export const SOURCE_UPDATES: Record<string, string> = {
+  gdelt: "Updated every 15 minutes",
+  ucdp: "Updated monthly, about three weeks behind",
+  acled: "Past years only",
 };
 
 const whole = new Intl.NumberFormat("en-US");

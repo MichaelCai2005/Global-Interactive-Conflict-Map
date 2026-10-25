@@ -2,7 +2,7 @@ import { useCountries, useDeadliest, useSummary } from "../api/hooks";
 import type { Scope } from "../api/client";
 import type { Bbox, EventOut, Summary } from "../api/types";
 import { type DateWindow, daysBetween, describeLength, formatDate, formatRange, previousWindow } from "../lib/dates";
-import { eventTypeLabel, formatChange, formatCompact, formatCount, percentChange } from "../lib/format";
+import { eventTypeLabel, formatChange, formatCompact, formatCount, percentChange, placeLabel } from "../lib/format";
 import { COLORS } from "../theme";
 
 interface Props {
@@ -16,9 +16,12 @@ export function OverviewPanel({ scope, inView, onCountry, onEvent }: Props) {
   const previous = { ...scope, window: previousWindow(scope.window) };
   const current = useSummary(scope);
   const before = useSummary(previous);
-  const countries = useCountries(scope, 10);
+  const countries = useCountries(scope, 15);
   const deadliest = useDeadliest(scope, 6, scope.filters.violence !== "signals");
   const length = daysBetween(scope.window.start, scope.window.end) + 1;
+  // The newest days often have only news reports, which carry no death counts; then a column
+  // of zeros says nothing, so it is dropped.
+  const counted = deadliest.data?.items.some((e) => (e.fatalities_best ?? 0) > 0) ?? false;
 
   return (
     <div className="panel-body">
@@ -38,16 +41,22 @@ export function OverviewPanel({ scope, inView, onCountry, onEvent }: Props) {
       {scope.filters.violence !== "signals" && (
         <section>
           <h3>Deadliest events</h3>
-          {deadliest.data?.items.length === 0 && <p className="muted small">No violent events in this window.</p>}
-          <ol className="event-list">
+          {!deadliest.data ? (
+            <p className="muted small">{deadliest.error ? `Could not load events: ${deadliest.error.message}` : "Loading…"}</p>
+          ) : deadliest.data.items.length === 0 ? (
+            <p className="muted small">No violent events in this window.</p>
+          ) : (
+            !counted && <p className="muted small">No deaths recorded in this window yet; newest violent events first.</p>
+          )}
+          <ol className={`event-list${counted ? "" : " uncounted"}`}>
             {deadliest.data?.items.map((e) => (
               <li key={e.id}>
                 <button onClick={() => onEvent(e)}>
-                  <span className="event-deaths num">{formatCompact(e.fatalities_best ?? 0)}</span>
+                  {counted && <span className="event-deaths num">{formatCompact(e.fatalities_best ?? 0)}</span>}
                   <span className="event-text">
                     <span>{eventTypeLabel(e.event_type)}</span>
                     <span className="muted small">
-                      {[e.location_name, e.country].filter(Boolean).join(", ")} · {formatDate(e.event_date)}
+                      {placeLabel(e.location_name, e.country)} · {formatDate(e.event_date)}
                     </span>
                   </span>
                 </button>
@@ -59,14 +68,18 @@ export function OverviewPanel({ scope, inView, onCountry, onEvent }: Props) {
 
       <section>
         <h3>Countries</h3>
-        {countries.data?.length === 0 && <p className="muted small">No events in this window.</p>}
+        {!countries.data ? (
+          <p className="muted small">{countries.error ? `Could not load countries: ${countries.error.message}` : "Loading…"}</p>
+        ) : (
+          countries.data.length === 0 && <p className="muted small">No events in this window.</p>
+        )}
         <CountryBars rows={countries.data ?? []} onCountry={onCountry} />
       </section>
     </div>
   );
 }
 
-function Stat({
+export function Stat({
   label,
   kind,
   now,
@@ -103,7 +116,7 @@ export function Change({ change }: { change: number | null }) {
   );
 }
 
-function CountryBars({
+export function CountryBars({
   rows,
   onCountry,
 }: {

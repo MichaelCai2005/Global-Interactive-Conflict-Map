@@ -1,6 +1,7 @@
 """Fetches raw source files into a local folder so they can be loaded with `ingest load`."""
 
 import csv
+import hashlib
 import json
 import logging
 import re
@@ -8,7 +9,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, timedelta
+import zipfile
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from app.ingest import wdi
@@ -17,6 +19,11 @@ log = logging.getLogger(__name__)
 
 # GDELT 1.0 publishes one zipped file per day from 2013-04-01 onward.
 GDELT_DAILY_URL = "http://data.gdeltproject.org/events/{day:%Y%m%d}.export.CSV.zip"
+# GDELT 2.0 posts an Events and a Mentions file every 15 minutes, named for the quarter
+# hour (UTC) they close, and lists the newest in lastupdate.txt.
+GDELT_LIVE_LAST = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+GDELT_LIVE_URL = "https://data.gdeltproject.org/gdeltv2/{stamp}.{kind}.CSV.zip"
+GDELT_LIVE_STEP = timedelta(minutes=15)
 # UCDP names its GED release files by version, e.g. 26.1 -> ged261-csv.zip. Check the
 # current version at https://ucdp.uu.se/downloads/ if this 404s.
 UCDP_GED_URL = "https://ucdp.uu.se/downloads/ged/ged{version}-csv.zip"
@@ -37,8 +44,21 @@ WDI_PAGE_SIZE = 20000
 EPR_URL = "https://icr.ethz.ch/data/epr/core/EPR-{version}.csv"
 
 
-def fetch(url: str, dest: Path, attempts: int = 4) -> Path:
-    """Downloads with exponential backoff; skips files already on disk."""
+class BadDownload(Exception):
+    """The server answered, but not with the whole file."""
+
+
+def _check(partial: Path, dest: Path, md5: str | None) -> None:
+    # GDELT sometimes serves a just-posted file as zero bytes for a minute or two.
+    if dest.suffix.lower() == ".zip" and not zipfile.is_zipfile(partial):
+        raise BadDownload(f"{dest.name} is not a whole zip file")
+    if md5 and hashlib.md5(partial.read_bytes()).hexdigest() != md5.lower():
+        raise BadDownload(f"{dest.name} does not match its listed checksum")
+
+
+def fetch(url: str, dest: Path, attempts: int = 4, md5: str | None = None) -> Path:
+    """Downloads with exponential backoff; skips files already on disk. A .zip that isn't
+    one, or a file that doesn't match `md5`, counts as a failed attempt."""
     if dest.exists() and dest.stat().st_size > 0:
         log.info("already have %s", dest.name)
         return dest
@@ -49,7 +69,14 @@ def fetch(url: str, dest: Path, attempts: int = 4) -> Path:
             with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as out:
                 while chunk := response.read(1 << 20):
                     out.write(chunk)
-            partial.rename(dest)
+            try:
+                _check(partial, dest, md5)
+            except BadDownload:
+                partial.unlink()
+                if attempt == attempts:
+                    raise
+                raise ConnectionError("incomplete download") from None
+            partial.replace(dest)
             log.info("downloaded %s", dest.name)
             return dest
         except urllib.error.HTTPError as exc:
@@ -75,6 +102,53 @@ def gdelt_daily(start: date, end: date, out_dir: Path) -> list[Path]:
             log.warning("skipping %s: HTTP %s", day, exc.code)
         day += timedelta(days=1)
     return paths
+
+
+def gdelt_live_latest() -> tuple[datetime, dict[str, str]]:
+    """The newest 15-minute slot GDELT has posted, and its files' MD5s by kind."""
+    with urllib.request.urlopen(GDELT_LIVE_LAST, timeout=60) as response:
+        return parse_lastupdate(response.read().decode("ascii", errors="replace"))
+
+
+def parse_lastupdate(listing: str) -> tuple[datetime, dict[str, str]]:
+    """lastupdate.txt has a line per file: size, MD5, URL ending in <stamp>.<kind>.CSV.zip."""
+    stamp, md5s = None, {}
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        match = re.search(r"/(\d{14})\.(\w+)\.CSV\.zip$", parts[2], re.IGNORECASE)
+        if match:
+            stamp = match.group(1)
+            md5s[match.group(2).lower()] = parts[1]
+    if stamp is None:
+        raise ValueError("GDELT's lastupdate.txt lists no files")
+    return datetime.strptime(stamp, "%Y%m%d%H%M%S").replace(tzinfo=UTC), md5s
+
+
+def gdelt_live_slots(newest: datetime, limit: int) -> list[datetime]:
+    """The `limit` quarter hours up to `newest`, oldest first."""
+    return [newest - GDELT_LIVE_STEP * n for n in range(limit - 1, -1, -1)]
+
+
+def gdelt_live_files(
+    slot: datetime, out_dir: Path, md5s: dict[str, str] | None = None
+) -> tuple[Path, Path] | None:
+    """One slot's Events and Mentions files, or None if GDELT skipped that slot."""
+    stamp = slot.strftime("%Y%m%d%H%M%S")
+    paths = []
+    for kind in ("export", "mentions"):
+        url = GDELT_LIVE_URL.format(stamp=stamp, kind=kind)
+        try:
+            paths.append(
+                fetch(url, out_dir / "gdelt-live" / Path(url).name, md5=(md5s or {}).get(kind))
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+            log.warning("GDELT has no %s file for %s", kind, stamp)
+            return None
+    return paths[0], paths[1]
 
 
 def ucdp_ged(version: str, out_dir: Path) -> Path:

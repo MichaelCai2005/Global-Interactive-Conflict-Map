@@ -1,17 +1,18 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.db import get_db
-from app.models import Event, EventLink
+from app.models import Event, EventLink, EventSource
 from app.schemas import (
     EventDetail,
     EventOut,
     EventPage,
+    EventSourceOut,
     LinkedEvent,
     Timeline,
     TimelineBucket,
@@ -30,6 +31,11 @@ class EventFilters(BaseModel):
     start: date | None = None
     end: date | None = None
     bbox: str | None = Field(None, description="min_lon,min_lat,max_lon,max_lat")
+    reported_since: datetime | None = Field(
+        None,
+        description="Only events GDELT first published at or after this time (UCDP and"
+        " ACLED have none)",
+    )
     include_duplicates: bool = Field(
         False, description="Also return events already reported by a higher-priority source"
     )
@@ -60,6 +66,8 @@ class EventFilters(BaseModel):
             query = query.where(Event.event_date >= self.start)
         if self.end:
             query = query.where(Event.event_date <= self.end)
+        if self.reported_since:
+            query = query.where(Event.first_reported_at >= self.reported_since)
         if bounds := self.bounds():
             min_lon, min_lat, max_lon, max_lat = bounds
             query = query.where(
@@ -67,7 +75,20 @@ class EventFilters(BaseModel):
             )
         if not self.include_duplicates:
             query = query.where(Event.duplicate_of_id.is_(None))
-        return query
+        return query.where(
+            or_(
+                Event.source != "gdelt",
+                Event.is_violent.is_(False),
+                Event.admin1.is_distinct_from(DATELINE_ADM1),
+            )
+        )
+
+
+# GDELT places a story where it is datelined, and US news is datelined Washington: a debate,
+# a court ruling or a strike abroad becomes "fighting" at the White House. Nearly all of
+# GDELT's violent events in DC are of this kind, so they are hidden. Protests and other
+# signals there are real and stay.
+DATELINE_ADM1 = "USDC"
 
 
 # FastAPI reads a query model only when it is the endpoint's sole query parameter, so each
@@ -75,7 +96,9 @@ class EventFilters(BaseModel):
 class EventQuery(EventFilters):
     limit: int = Field(100, ge=1, le=1000)
     offset: int = Field(0, ge=0)
-    sort: Literal["date", "fatalities"] = Field("date", description="Newest or deadliest first")
+    sort: Literal["date", "fatalities", "reports"] = Field(
+        "date", description="Newest, deadliest or most reported first"
+    )
 
 
 class TimelineQuery(EventFilters):
@@ -92,6 +115,8 @@ def list_events(params: Annotated[EventQuery, Query()], db: Db):
     order = [Event.event_date.desc(), Event.id]
     if params.sort == "fatalities":
         order.insert(0, Event.fatalities_best.desc().nulls_last())
+    elif params.sort == "reports":
+        order.insert(0, Event.report_count.desc())
     rows = db.scalars(query.order_by(*order).limit(params.limit).offset(params.offset))
     return EventPage(total=total, limit=params.limit, offset=params.offset, items=list(rows))
 
@@ -126,11 +151,37 @@ def get_event(event_id: int, db: Db):
             event=EventOut.model_validate(linked_event),
         )
 
+    reporting = [event_id, *(e.id for _, e in duplicates)]
+    sources = db.scalars(
+        select(EventSource)
+        .where(EventSource.event_id.in_(reporting))
+        .order_by(EventSource.first_seen_at.nulls_last(), EventSource.id)
+        .limit(SOURCES_SHOWN)
+    ).all()
+    source_count = db.scalar(
+        select(func.count(func.distinct(EventSource.url))).where(
+            EventSource.event_id.in_(reporting)
+        )
+    )
     return EventDetail(
         **EventOut.model_validate(event).model_dump(),
         duplicates=[linked(link, e) for link, e in duplicates],
         duplicate_of=linked(*canonical) if canonical else None,
+        sources=_unique_urls(sources),
+        source_count=source_count or 0,
     )
+
+
+# A UCDP event can have dozens of GDELT duplicates, each with up to 50 articles.
+SOURCES_SHOWN = 200
+
+
+def _unique_urls(sources: list[EventSource]) -> list[EventSourceOut]:
+    """One entry per article, though several duplicates may list it."""
+    seen: dict[str, EventSourceOut] = {}
+    for s in sources:
+        seen.setdefault(s.url, EventSourceOut.model_validate(s))
+    return list(seen.values())
 
 
 @router.get("/timeline", response_model=Timeline)

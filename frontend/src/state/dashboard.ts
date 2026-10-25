@@ -2,7 +2,7 @@ import type { Bbox } from "../api/types";
 import { type DateWindow, addDays } from "../lib/dates";
 
 export type Violence = "all" | "violent" | "signals";
-export type Panel = "overview" | "risk" | "watchlist" | "tasks" | "board" | "saved";
+export type Panel = "now" | "overview" | "risk" | "watchlist" | "tasks" | "board" | "saved";
 
 export interface Filters {
   sources: string[];
@@ -74,9 +74,17 @@ export function initialState(search: string): DashboardState {
     followView: q.get("follow") !== "0",
     selectedEventId: Number.isInteger(event) && event > 0 ? event : null,
     panel:
-      panel === "risk" || panel === "watchlist" || panel === "tasks" || panel === "board" || panel === "saved"
+      panel === "now" ||
+      panel === "risk" ||
+      panel === "watchlist" ||
+      panel === "tasks" ||
+      panel === "board" ||
+      panel === "saved"
         ? panel
-        : "overview",
+        : // A plain visit opens on what is happening now; a link without a panel, on the overview.
+          q.toString() === ""
+          ? "now"
+          : "overview",
     boardId: Number.isInteger(board) && board > 0 ? board : null,
     playing: false,
     speed: 1,

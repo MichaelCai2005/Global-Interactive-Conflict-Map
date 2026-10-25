@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Interval, TimelineBucket } from "../api/types";
 import { type DateWindow, addDays, clampWindow, daysBetween, formatRange } from "../lib/dates";
 import { Timeline, TimelineTable } from "./Timeline";
+import { CloseButton } from "./Workspace";
 
 interface Props {
   buckets: TimelineBucket[];
@@ -19,6 +20,10 @@ interface Props {
   onPlay(playing: boolean): void;
   onSpeed(speed: number): void;
   onFollowView(follow: boolean): void;
+  /** Moves the window to end on the newest data. */
+  onLatest(): void;
+  /** Closes the timeline, when it can be closed. */
+  onClose?: () => void;
 }
 
 const LENGTHS = [
@@ -34,6 +39,7 @@ export function TimelineBar(props: Props) {
   const [table, setTable] = useState(false);
   const length = daysBetween(window.start, window.end) + 1;
   const isFull = domain.start === full.start && domain.end === full.end;
+  const atLatest = window.end === full.end;
 
   const setLength = (days: number) =>
     props.onWindow(clampWindow({ start: window.start, end: addDays(window.start, days - 1) }, domain));
@@ -46,10 +52,11 @@ export function TimelineBar(props: Props) {
   };
 
   return (
-    <section className="timeline-bar" aria-label="Timeline">
+    <section className="timeline-bar" aria-label="Timeline" data-tour="timeline">
       <div className="timeline-controls">
         <button
           className="play"
+          data-tour="play"
           onClick={() => props.onPlay(!props.playing)}
           aria-label={props.playing ? "Pause" : "Play"}
           title={props.playing ? "Pause" : "Play: move the window forward step by step"}
@@ -75,8 +82,16 @@ export function TimelineBar(props: Props) {
             </button>
           ))}
         </div>
+        <button
+          className={`ghost small latest${atLatest ? " is-on" : ""}`}
+          onClick={props.onLatest}
+          aria-pressed={atLatest}
+          title={atLatest ? "The window ends on the newest data" : "Move the window to the newest data"}
+        >
+          <span className="live-dot" aria-hidden /> Latest
+        </button>
         <span className="spacer" />
-        <div className="segmented small" role="radiogroup" aria-label="Timeline counts">
+        <div className="segmented small" role="radiogroup" aria-label="Timeline counts" data-tour="follow">
           <button
             role="radio"
             aria-checked={props.followView}
@@ -107,6 +122,7 @@ export function TimelineBar(props: Props) {
         <button className="ghost small" onClick={() => setTable(!table)} aria-pressed={table}>
           {table ? "Chart" : "Table"}
         </button>
+        {props.onClose && <CloseButton label="Close timeline" onClick={props.onClose} />}
       </div>
       {table ? (
         <TimelineTable buckets={buckets} interval={interval} />

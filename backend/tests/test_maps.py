@@ -1,3 +1,6 @@
+from sqlalchemy import update
+
+from app.models import Event
 from tests.test_ingest import load_sample
 
 
@@ -62,7 +65,12 @@ def test_summary_totals_follow_the_filters(client, session, tmp_path):
 def test_facets_describe_the_data(client, session, tmp_path):
     load_sample(session, tmp_path)
     facets = client.get("/facets").json()
-    assert facets["sources"] == [{"value": "gdelt", "count": 2}, {"value": "ucdp", "count": 2}]
+    assert [(s["value"], s["count"]) for s in facets["sources"]] == [("gdelt", 2), ("ucdp", 2)]
+    # Each source's own date range, so the map can say how current each one is.
+    assert {s["value"]: (s["first_date"], s["last_date"]) for s in facets["sources"]} == {
+        "gdelt": ("2022-02-20", "2022-03-01"),
+        "ucdp": ("2022-03-01", "2022-03-01"),
+    }
     assert {(t["value"], t["is_violent"]) for t in facets["event_types"]} == {
         ("state_based", True),
         ("protest", False),
@@ -91,7 +99,28 @@ def test_events_can_be_sorted_by_fatalities(client, session, tmp_path):
     assert items[-1]["fatalities_best"] is None
 
 
+def test_events_can_be_sorted_by_reports(client, session, tmp_path):
+    load_sample(session, tmp_path)
+    items = client.get("/events", params={"sort": "reports"}).json()["items"]
+    reports = [e["report_count"] for e in items]
+    assert reports == sorted(reports, reverse=True)
+
+
 def test_events_accept_several_sources(client, session, tmp_path):
     load_sample(session, tmp_path)
     total = client.get("/events", params={"source": ["ucdp", "gdelt"]}).json()["total"]
     assert total == 4
+
+
+def test_gdelt_violence_datelined_in_washington_is_hidden(client, session, tmp_path):
+    load_sample(session, tmp_path)
+    session.execute(update(Event).where(Event.source == "gdelt").values(admin1="USDC"))
+    session.flush()
+    # The GDELT fight at 10N 10E goes; the GDELT protest and UCDP's events stay.
+    assert client.get("/summary").json() == {
+        "violent_events": 2,
+        "signal_events": 1,
+        "fatalities": 10,
+    }
+    sources = {e["source"] for e in client.get("/events", params={"violent": True}).json()["items"]}
+    assert sources == {"ucdp"}

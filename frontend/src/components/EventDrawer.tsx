@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useEvent, useTaskMutations, useTasks } from "../api/hooks";
 import type { EventDetail, EventOut } from "../api/types";
+import { eventCategory } from "../lib/categories";
 import { formatDate } from "../lib/dates";
 import { eventTypeLabel, formatCount, plural, sourceLabel } from "../lib/format";
+import { describeTimeAgo, headlineFromUrl } from "../lib/now";
 
 interface Props {
   eventId: number;
@@ -50,11 +52,13 @@ function Detail({
     ([, v]) => v !== null && v !== "" && typeof v !== "object",
   );
 
+  const category = eventCategory(event.event_type, event.is_violent);
+
   return (
     <>
-      <div className={`drawer-kind kind-${event.is_violent ? "violent" : "signals"}`}>
-        <span className={`dot dot-${event.is_violent ? "violent" : "signals"}`} aria-hidden />
-        {event.is_violent ? "Violence" : "Signal"}
+      <div className={`drawer-kind kind-${event.is_violent ? "violent" : "signals"}`} title={category.description}>
+        <span className="dot" style={{ background: category.color }} aria-hidden />
+        {category.label}
       </div>
       <h2>{eventTypeLabel(event.event_type)}</h2>
       <p className="drawer-sub">
@@ -62,6 +66,12 @@ function Detail({
         {event.end_date && event.end_date !== event.event_date && ` – ${formatDate(event.end_date)}`}
         {place.length > 0 && ` · ${place.join(", ")}`}
       </p>
+      {event.source === "gdelt" && (
+        <p className="unconfirmed small">
+          <strong>Unconfirmed news report.</strong> GDELT codes events by machine from news articles; nobody has checked
+          this one. Read the articles before relying on it.
+        </p>
+      )}
 
       <dl className="facts">
         {deaths !== null && (
@@ -93,6 +103,15 @@ function Detail({
             </>
           )}
         </dd>
+        {event.first_reported_at && (
+          <>
+            <dt>First reported</dt>
+            <dd>
+              {new Date(event.first_reported_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}{" "}
+              <span className="muted">({describeTimeAgo(event.first_reported_at)})</span>
+            </dd>
+          </>
+        )}
         {event.tone !== null && (
           <>
             <dt>News tone</dt>
@@ -106,6 +125,8 @@ function Detail({
           </>
         )}
       </dl>
+
+      {event.sources.length > 0 && <Articles sources={event.sources} total={event.source_count} />}
 
       {event.duplicate_of && (
         <section className="drawer-section">
@@ -139,6 +160,39 @@ function Detail({
 
       <EventTasks event={event} onShowTasks={onShowTasks} />
     </>
+  );
+}
+
+function Articles({ sources, total }: { sources: EventDetail["sources"]; total: number }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? sources : sources.slice(0, 8);
+  return (
+    <section className="drawer-section">
+      <h3>News articles ({formatCount(total)})</h3>
+      <p className="muted small">Every article GDELT matched to this event, earliest first.</p>
+      <ul className="articles">
+        {shown.map((s) => (
+          <li key={s.url}>
+            <a href={s.url} target="_blank" rel="noreferrer noopener" title={s.url}>
+              {headlineFromUrl(s.url) ?? s.url}
+            </a>
+            <span className="muted small">
+              {s.source_name ?? "unknown site"}
+              {s.first_seen_at &&
+                ` · ${new Date(s.first_seen_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
+            </span>
+          </li>
+        ))}
+        {sources.length > shown.length && (
+          <li>
+            <button className="link-button small" onClick={() => setAll(true)}>
+              Show all {sources.length}
+            </button>
+          </li>
+        )}
+      </ul>
+      {total > sources.length && <p className="muted small">Showing the first {sources.length}.</p>}
+    </section>
   );
 }
 

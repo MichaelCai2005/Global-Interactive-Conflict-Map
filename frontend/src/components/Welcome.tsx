@@ -1,14 +1,17 @@
 import type { Facets } from "../api/types";
+import { formatDate } from "../lib/dates";
 import { formatCount, SOURCE_DESCRIPTIONS, sourceLabel } from "../lib/format";
 import { STORIES, type Story } from "../lib/stories";
 
 interface Props {
   facets: Facets | undefined;
+  onTour(): void;
+  onNow(): void;
   onStory(story: Story): void;
   onClose(): void;
 }
 
-export function Welcome({ facets, onStory, onClose }: Props) {
+export function Welcome({ facets, onTour, onNow, onStory, onClose }: Props) {
   const total = facets?.sources.reduce((sum, s) => sum + s.count, 0);
   return (
     <div className="welcome-backdrop" onClick={onClose}>
@@ -40,6 +43,9 @@ export function Welcome({ facets, onStory, onClose }: Props) {
             </li>
           ))}
         </ul>
+        <button className="primary tour-start" onClick={onTour}>
+          New here? Take the one-minute tour
+        </button>
         <ol className="how">
           <li>
             <strong>Drag the window</strong> on the timeline (or press play) to move through time. The map shows
@@ -54,7 +60,17 @@ export function Welcome({ facets, onStory, onClose }: Props) {
             or add a task.
           </li>
         </ol>
-        <h3>Start with a story</h3>
+        <button className="story now-story" onClick={onNow} disabled={!facets?.last_date}>
+          <span className="story-title">
+            <span className="live-dot" aria-hidden /> See what's happening now
+          </span>
+          {facets?.last_date && <span className="muted small">The latest week, to {formatDate(facets.last_date)}</span>}
+          <span className="small">
+            This week's most reported violence, the deadliest recent fighting, and the countries whose risk is
+            rising.
+          </span>
+        </button>
+        <h3>Or start with a story from the past</h3>
         <div className="stories">
           {STORIES.map((s) => (
             <button key={s.id} className="story" onClick={() => onStory(s)}>

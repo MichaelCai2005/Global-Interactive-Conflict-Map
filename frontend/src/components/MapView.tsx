@@ -14,6 +14,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Bbox, CellProps, MapLayer, PointProps } from "../api/types";
 import { type DateWindow, formatDate, toDay } from "../lib/dates";
+import { CATEGORIES, CATEGORY_TYPES, type ColorBy, DEATH_STOPS, NO_DEATHS_COLOR, eventCategory } from "../lib/categories";
 import { eventTypeLabel, formatCount, plural, sourceLabel } from "../lib/format";
 import { viewBbox } from "../lib/geo";
 import { BOARD_STYLE_COLORS, KIND_LABELS } from "../board/style";
@@ -37,7 +38,11 @@ interface Props {
   ref?: Ref<MapHandle>;
   initialCamera: Camera;
   layer: MapLayer | undefined;
+  /** What event color shows: the kind of event, or how many died. */
+  colorBy?: ColorBy;
   window: DateWindow | null;
+  /** The newest date in the data; events from its last two days are ringed. */
+  latest?: string | null;
   selected: { lon: number; lat: number } | null;
   /** Country risk scores; when given, the map shows them instead of events. */
   risk: FeatureCollection | null;
@@ -52,6 +57,9 @@ interface Props {
 }
 
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+/** How many of the newest days of data the map rings. */
+export const NEW_DAYS = 2;
 
 // Radius grows with the square root of deaths, so area is roughly proportional to them.
 const POINT_RADIUS: ExpressionSpecification = [
@@ -92,7 +100,9 @@ export function MapView({
   ref,
   initialCamera,
   layer,
+  colorBy = "type",
   window,
+  latest = null,
   selected,
   risk,
   riskSelected,
@@ -183,7 +193,7 @@ export function MapView({
           source: "events",
           filter: ["!=", ["get", "precision"], "country"],
           paint: {
-            "circle-color": ["case", ["get", "violent"], COLORS.violence, COLORS.signal],
+            "circle-color": CATEGORY_COLOR,
             "circle-radius": POINT_RADIUS,
             "circle-stroke-color": COLORS.surface,
             "circle-stroke-width": 1,
@@ -202,8 +212,25 @@ export function MapView({
           paint: {
             "circle-color": "rgba(0,0,0,0)",
             "circle-radius": POINT_RADIUS,
-            "circle-stroke-color": ["case", ["get", "violent"], COLORS.violence, COLORS.signal],
+            "circle-stroke-color": CATEGORY_COLOR,
             "circle-stroke-width": 1.5,
+          },
+        },
+        firstLabel,
+      );
+      // The newest events get a ring, so what just happened stands out from the window.
+      map.addLayer(
+        {
+          id: "points-new",
+          type: "circle",
+          source: "events",
+          filter: ["==", ["get", "day"], -1],
+          paint: {
+            "circle-color": "rgba(0,0,0,0)",
+            "circle-radius": ["+", POINT_RADIUS, 3],
+            "circle-stroke-color": COLORS.ink,
+            "circle-stroke-width": 1.25,
+            "circle-stroke-opacity": 0.85,
           },
         },
         firstLabel,
@@ -311,7 +338,28 @@ export function MapView({
     show("cells", !riskMode && grid);
     show("points", !riskMode && !grid);
     show("points-country", !riskMode && !grid);
-  }, [ready, risk, layer?.mode]);
+    show("points-new", !riskMode && !grid && !board);
+  }, [ready, risk, layer?.mode, board]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    const color = colorBy === "deaths" ? deathColor(["get", "deaths"]) : CATEGORY_COLOR;
+    map.setPaintProperty("points", "circle-color", color);
+    map.setPaintProperty("points-country", "circle-stroke-color", color);
+    map.setPaintProperty("cells", "circle-color", colorBy === "deaths" ? deathColor(["get", "deaths"]) : shareColor());
+    // Bright, deadly events draw on top of the dim ones around them.
+    const sort: ExpressionSpecification | undefined = colorBy === "deaths" ? ["get", "deaths"] : undefined;
+    map.setLayoutProperty("points", "circle-sort-key", sort);
+    map.setLayoutProperty("points-country", "circle-sort-key", sort);
+  }, [ready, colorBy]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    const since = latest ? toDay(latest) - (NEW_DAYS - 1) : Number.MAX_SAFE_INTEGER;
+    map.setFilter("points-new", ["all", ["!=", ["get", "precision"], "country"], [">=", ["get", "day"], since]]);
+  }, [ready, latest]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -494,6 +542,29 @@ function addBoardLayers(map: MapLibreMap, beforeLabel: string | undefined) {
   });
 }
 
+/** Events by category (lib/categories.ts); non-violent events are signals whatever their type. */
+const CATEGORY_COLOR = [
+  "case",
+  ["!", ["get", "violent"]],
+  NO_DEATHS_COLOR,
+  [
+    "match",
+    ["get", "type"],
+    ...Object.entries(CATEGORY_TYPES).flatMap(([key, types]) => [types, CATEGORIES.find((c) => c.key === key)!.color]),
+    eventCategory("", true).color,
+  ],
+] as unknown as ExpressionSpecification;
+
+/** Deaths on a log scale, grey when none are recorded. */
+function deathColor(deaths: ExpressionSpecification): ExpressionSpecification {
+  return [
+    "case",
+    ["<", deaths, 1],
+    NO_DEATHS_COLOR,
+    ["interpolate", ["linear"], ["log10", deaths], ...DEATH_STOPS.flatMap(([n, color]) => [Math.log10(n), color])],
+  ] as ExpressionSpecification;
+}
+
 /** Grid cells run from blue (all signals) through grey (mixed) to orange (all violence). */
 function shareColor(): ExpressionSpecification {
   return [
@@ -538,6 +609,8 @@ function tooltip(feature: MapGeoJSONFeature): HTMLElement {
   } else {
     const p = feature.properties as PointProps;
     line(eventTypeLabel(p.type), "map-tooltip-title");
+    const category = eventCategory(p.type, p.violent).label;
+    if (category !== eventTypeLabel(p.type)) line(category);
     line(`${formatDate(p.date)} · ${sourceLabel(p.source)}`);
     if (p.deaths) line(plural(p.deaths, "death"));
     if (p.precision === "country") line("Location known only to country level", "map-tooltip-hint");

@@ -236,6 +236,13 @@ free Dark Matter style (no key needed).
 
 What it does:
 
+- **Now**: where a visit starts. The newest week of data: how current each source is
+  (GDELT nightly, UCDP's monthly Candidate files about three weeks behind), the week's
+  totals against the week before, fighting in the news (GDELT, most reported first, one
+  line per place, with the article), the deadliest events in UCDP's newest month, the
+  countries whose risk rose most in the newest week with counted deaths, and the busiest
+  countries. The map rings events from the newest two days, and **Latest** on the timeline
+  moves the window back to the newest data from anywhere.
 - **Map**: the events inside the time window and map view. Orange is violence, blue is
   signals, size is deaths, and older events in the window fade. Events located only to a
   country are hollow. When more than 15,000 events match, the map shows density circles
@@ -293,13 +300,13 @@ and the limits.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /events` | Filter by `source`, `country`, `event_type` (repeatable), `violent`, `conflict_id`, `start`, `end`, `bbox`; duplicates hidden unless `include_duplicates=true`; `sort=fatalities` for deadliest first |
+| `GET /events` | Filter by `source`, `country`, `event_type` (repeatable), `violent`, `conflict_id`, `start`, `end`, `bbox`; duplicates hidden unless `include_duplicates=true`; `sort=fatalities` for deadliest first, `sort=reports` for most reported |
 | `GET /events/{id}` | One event with the reports linked to it |
 | `GET /timeline` | Violent events, signal events and deaths per `day`, `week` or `month`, same filters |
 | `GET /map` | GeoJSON for the map, same filters: points up to `max_points`, otherwise counts per grid cell of `cell` degrees |
 | `GET /summary` | Violent events, signal events and deaths, same filters |
 | `GET /countries` | Busiest countries under the filters, with where most of their events are |
-| `GET /facets` | Sources, event types, countries and date range in the data, for filter controls |
+| `GET /facets` | Sources (each with its own date range, to show how current it is), event types, countries and date range in the data, for filter controls |
 | `GET/POST /watchlist`, `PATCH/DELETE /watchlist/{id}` | Countries or areas (`bbox`) to watch |
 | `GET/POST /tasks`, `PATCH/DELETE /tasks/{id}` | Analyst tasks, optionally linked to an event or watch item; filter by `status`, `event_id`, `watch_item_id` |
 | `GET /features/cells` | Cell-month features for one `month`, filtered by `iso3` or `bbox`, with each cell's prior-year country indicators |

@@ -33,6 +33,8 @@ class EventOut(BaseModel):
     conflict_id: str | None
     duplicate_of_id: int | None
     attributes: dict[str, Any]
+    # When GDELT first published it; empty for UCDP and ACLED.
+    first_reported_at: datetime | None
 
 
 class EventPage(BaseModel):
@@ -50,9 +52,23 @@ class LinkedEvent(BaseModel):
     event: EventOut
 
 
+class EventSourceOut(BaseModel):
+    """A news article that reported the event, or one of its duplicates."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    url: str
+    source_name: str | None
+    first_seen_at: datetime | None
+    confidence: int | None
+
+
 class EventDetail(EventOut):
     duplicates: list[LinkedEvent]
     duplicate_of: LinkedEvent | None
+    # Articles found for this event and the events marked as its duplicates, oldest first.
+    sources: list[EventSourceOut]
+    source_count: int
 
 
 class TimelineBucket(BaseModel):
@@ -104,10 +120,16 @@ class EventTypeFacet(Facet):
     is_violent: bool
 
 
+class SourceFacet(Facet):
+    # How current each source is: UCDP's monthly files lag weeks behind GDELT's daily ones.
+    first_date: date | None
+    last_date: date | None
+
+
 class Facets(BaseModel):
     """What the data contains, for building filter controls."""
 
-    sources: list[Facet]
+    sources: list[SourceFacet]
     event_types: list[EventTypeFacet]
     countries: list[Facet]
     first_date: date | None

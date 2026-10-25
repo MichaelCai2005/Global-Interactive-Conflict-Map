@@ -195,20 +195,36 @@ code {
 
 /* Layout */
 
+/* The top bar, then the workspace: side panel and map above the timeline, in resizable
+   panels (components/Workspace.tsx). The panels draw the 1px lines between the areas. */
 .app {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  grid-template-rows: auto 1fr auto;
-  grid-template-areas:
-    "top top"
-    "side map"
-    "time time";
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
 }
 
+.workspace {
+  flex: 1;
+  min-height: 0;
+}
+
+.pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-handle {
+  transition: background-color 0.15s;
+}
+
+.workspace-handle[data-separator="hover"],
+.workspace-handle[data-separator="active"] {
+  background: var(--accent);
+}
+
 .topbar {
-  grid-area: top;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -237,29 +253,34 @@ code {
   box-shadow: 0 0 0 3px rgba(217, 89, 38, 0.25);
 }
 
+.pane-toggles {
+  display: flex;
+  gap: 2px;
+  color: var(--ink-2);
+}
+
 .sidebar {
-  grid-area: side;
   background: var(--surface);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
 }
 
 .map-area {
-  grid-area: map;
   position: relative;
+  height: 100%;
   min-height: 0;
 }
 
 .timeline-area {
-  grid-area: time;
   background: var(--surface);
-  border-top: 1px solid var(--border);
+  height: 100%;
 }
 
 .timeline-placeholder {
-  height: 190px;
+  height: 100%;
+  min-height: 160px;
   display: grid;
   place-items: center;
 }
@@ -395,9 +416,22 @@ code {
 
 /* Sidebar */
 
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-2);
+}
+
 .tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
+  /* A narrowed panel scrolls its tabs sideways rather than squashing them. */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .tabs button {
@@ -487,6 +521,10 @@ code {
 
 .event-list button:hover {
   background: var(--surface-2);
+}
+
+.event-list.uncounted button {
+  grid-template-columns: 1fr;
 }
 
 .event-deaths {
@@ -759,6 +797,11 @@ code {
   color: var(--ink);
 }
 
+.map-legend .segmented {
+  align-self: flex-start;
+  margin-bottom: 2px;
+}
+
 .legend-ramp {
   height: 8px;
   border-radius: 4px;
@@ -925,6 +968,9 @@ code {
 
 .timeline-bar {
   padding: 8px 14px 6px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .timeline-controls {
@@ -953,10 +999,24 @@ code {
   min-width: 200px;
 }
 
+/* The chart takes whatever height the timeline pane gives it; Timeline.tsx sizes its rows
+   to fit. */
 .timeline-chart {
   position: relative;
+  flex: 1;
+  min-height: 0;
   user-select: none;
   touch-action: none;
+}
+
+/* Block, so no line gap below it feeds back into the height the rows are sized from. */
+.timeline-chart svg {
+  display: block;
+}
+
+/* Stacked on a phone, the timeline is as tall as its chart, so the rows keep their least height. */
+.stacked .timeline-chart {
+  flex: none;
 }
 
 .timeline-chart.is-loading svg {
@@ -1023,7 +1083,8 @@ code {
 }
 
 .timeline-table {
-  height: 146px;
+  flex: 1 1 146px;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -1137,21 +1198,118 @@ code {
   font-weight: 600;
 }
 
+.tour-start {
+  width: 100%;
+  margin: 4px 0 14px;
+}
+
+/* Guided tour */
+
+.tour-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.tour-blocker.is-dim {
+  background: rgba(5, 6, 8, 0.7);
+}
+
+.tour-hole {
+  position: fixed;
+  z-index: 60;
+  border-radius: var(--radius);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 9999px rgba(5, 6, 8, 0.7);
+  pointer-events: none;
+  transition: top 0.25s ease, left 0.25s ease, width 0.25s ease, height 0.25s ease;
+}
+
+.tour-card {
+  position: fixed;
+  z-index: 61;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  transition: top 0.25s ease, left 0.25s ease;
+}
+
+.tour-card:focus {
+  outline: none;
+}
+
+.tour-card h2 {
+  font-size: 16px;
+  margin: 6px 0 4px;
+}
+
+.tour-body {
+  color: var(--ink-2);
+}
+
+.tour-body p {
+  margin: 6px 0;
+}
+
+.tour-body strong {
+  color: var(--ink);
+}
+
+.tour-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tour-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.tour-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--surface-3);
+}
+
+.tour-dots .is-done {
+  background: rgba(57, 135, 229, 0.5);
+}
+
+.tour-dots .is-on {
+  background: var(--accent);
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-hole,
+  .tour-card {
+    transition: none;
+  }
+}
+
 @media (max-width: 900px) {
+  /* Narrow screens stack map, timeline and side panel, and the page scrolls. */
   .app {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 55vh auto auto;
-    grid-template-areas:
-      "top"
-      "map"
-      "time"
-      "side";
     height: auto;
     overflow: visible;
   }
 
-  .sidebar {
-    border-right: none;
+  .stacked .map-area {
+    height: 55vh;
+  }
+
+  .stacked .timeline-area,
+  .stacked .sidebar {
+    height: auto;
     border-top: 1px solid var(--border);
   }
 
@@ -1273,4 +1431,141 @@ code {
   .account-name {
     display: none;
   }
+}
+
+/* Now: the newest week of data */
+
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--serious);
+  vertical-align: 0;
+  margin-right: 2px;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% {
+    box-shadow: 0 0 0 4px rgba(236, 131, 90, 0.25);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+.primary {
+  background: rgba(57, 135, 229, 0.18);
+  border-color: rgba(57, 135, 229, 0.6);
+}
+
+.now-panel > .primary {
+  margin-bottom: 12px;
+}
+
+.freshness {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.freshness li {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+
+.rise-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rise-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 40px 56px;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 4px;
+}
+
+.rise-list button:hover {
+  background: var(--surface-2);
+}
+
+.rise-list .num {
+  text-align: right;
+}
+
+.timeline-controls .latest.is-on {
+  color: var(--ink);
+  border-color: rgba(236, 131, 90, 0.6);
+}
+
+.swatch.ringed {
+  background: var(--violence);
+  box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 2.75px var(--ink);
+}
+
+.now-story {
+  width: 100%;
+  margin-bottom: 14px;
+  border-color: rgba(236, 131, 90, 0.5);
+}
+
+.event-article {
+  display: block;
+  margin: -2px 0 6px 66px;
+  color: #6da7ec;
+}
+
+/* "News in the last 24 hours" in the Now panel, and unconfirmed-report notes. */
+.today {
+  margin-bottom: 12px;
+}
+
+.today-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.today > .wide {
+  margin-top: 8px;
+}
+
+.unconfirmed {
+  margin: 4px 0 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--serious);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--ink-2);
+}
+
+.articles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.articles a {
+  display: block;
+  overflow-wrap: anywhere;
 }

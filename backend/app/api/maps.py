@@ -9,7 +9,15 @@ from sqlalchemy.orm import Session
 from app.api.events import EventFilters
 from app.db import get_db
 from app.models import Event
-from app.schemas import CountrySummary, EventTypeFacet, Facet, Facets, MapLayer, Summary
+from app.schemas import (
+    CountrySummary,
+    EventTypeFacet,
+    Facet,
+    Facets,
+    MapLayer,
+    SourceFacet,
+    Summary,
+)
 
 router = APIRouter(tags=["map"])
 Db = Annotated[Session, Depends(get_db)]
@@ -135,18 +143,29 @@ def facets(db: Db):
             .order_by(func.count().desc(), columns[0])
         ).all()
 
-    first, last = db.execute(
-        select(func.min(Event.event_date), func.max(Event.event_date)).where(canonical)
-    ).one()
+    sources = db.execute(
+        select(
+            Event.source,
+            func.count(),
+            func.min(Event.event_date).label("first"),
+            func.max(Event.event_date).label("last"),
+        )
+        .where(canonical)
+        .group_by(Event.source)
+        .order_by(func.count().desc(), Event.source)
+    ).all()
     return Facets(
-        sources=[Facet(value=v, count=n) for v, n in counts(Event.source)],
+        sources=[
+            SourceFacet(value=v, count=n, first_date=first, last_date=last)
+            for v, n, first, last in sources
+        ],
         event_types=[
             EventTypeFacet(value=v, is_violent=violent, count=n)
             for v, violent, n in counts(Event.event_type, Event.is_violent)
         ],
         countries=[Facet(value=v, count=n) for v, n in counts(Event.country)],
-        first_date=first,
-        last_date=last,
+        first_date=min((s.first for s in sources), default=None),
+        last_date=max((s.last for s in sources), default=None),
     )
 
 

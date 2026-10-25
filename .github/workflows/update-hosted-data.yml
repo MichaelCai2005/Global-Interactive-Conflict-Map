@@ -2,7 +2,9 @@
 # those months' cell features and the risk scores, and prunes old live observations. Loading
 # a day again changes nothing, so the overlap fills in a night that failed or found no file
 # yet. Runs nightly and on demand (Actions tab > Update hosted data > Run workflow).
-# UCDP's monthly data has its own workflow, update-ucdp.yml.
+# update-gdelt-live.yml loads GDELT's 15-minute files through the day; these daily files
+# are the backstop for any it missed, though events found only here have no report time
+# and no article list. UCDP's monthly data has its own workflow, update-ucdp.yml.
 #
 # Needs a repository secret HOSTED_DATABASE_URL, the hosted database's direct (not pooled)
 # URL in the form postgresql+psycopg://user:pass@host/db?sslmode=require. Without it every
@@ -76,6 +78,9 @@ jobs:
       - name: Prune old live observations
         if: env.DATABASE_URL != ''
         run: python -m app.live prune --days 90
+      - name: Stop matching new GDELT articles to month-old events
+        if: env.DATABASE_URL != ''
+        run: python -m app.ingest prune-gdelt-ids --days 30
       - name: Check nothing unpublishable arrived
         if: env.DATABASE_URL != ''
         run: python -m app.publish check

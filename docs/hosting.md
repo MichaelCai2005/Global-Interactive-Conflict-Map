@@ -153,12 +153,13 @@ again. Their boards and the rest go with it.
 
 ## 4. Keep it current
 
-Two GitHub workflows update the hosted database. They run on GitHub's machines, not in
+Three GitHub workflows update the hosted database. They run on GitHub's machines, not in
 the API's container, so a long load never slows the site.
 
 | Workflow | When | What it does |
 |---|---|---|
-| `update-hosted-data.yml` | Every night | Loads the last three days of GDELT events. Loading a day twice changes nothing, so a failed night or a late GDELT file is picked up the next night. Then it rebuilds those months' features and the risk scores and prunes live observations older than 90 days. |
+| `update-gdelt-live.yml` | Every 15 minutes | Loads GDELT 2.0's newest 15-minute Events and Mentions files: new events, when GDELT first published each one, and every article that reported it (up to 50 an event). Each run loads every quarter hour of the past day not loaded yet, so a late GDELT file or a skipped run is picked up by a later one. |
+| `update-hosted-data.yml` | Every night | Loads the last three days of GDELT events. Loading a day twice changes nothing, so a failed night or a late GDELT file is picked up the next night. Then it rebuilds those months' features and the risk scores and prunes live observations older than 90 days. GDELT's daily files are the backstop for quarter hours the 15-minute workflow missed. |
 | `update-ucdp.yml` | The 23rd of each month | Loads UCDP's monthly Candidate events (each month's file is posted around the 20th of the next), then rebuilds this year's features and the risk scores. It loads every file of the year again each time, so UCDP's corrections to earlier months arrive too. |
 
 Both then check that nothing unpublishable arrived and report the database's size. To turn
@@ -178,9 +179,16 @@ them (271 of 1,912 for 2025), so the loader deletes the ones the release left ou
 use `python -m app.publish copy --replace` for this. It empties the hosted database
 first, so boards and accounts made on the site would be lost.
 
+GitHub runs a schedule only roughly on time, and it can be late by several minutes when it is
+busy. Each 15-minute run also wakes the Neon database, which then stays up for its
+autosuspend delay (5 minutes by default), so the database runs about a third of the day or
+more, even with nobody on the site. Check the compute hours on Neon's billing page after the
+first few days. To pause it, disable the workflow under **Actions**.
+
 ### Watching the size
 
-Neon's free plan holds 0.5 GB. GDELT grows the database a little every night, and UCDP
+Neon's free plan holds 0.5 GB. GDELT grows the database through the day (about 10 MB of
+events and 8 MB of article links a day, measured on 2026-10-24), and UCDP
 adds a few thousand events a month. Each run's last step logs the database's size and its
 five largest tables, and puts a warning in the run summary once the database passes
 450 MB. On a paid plan, raise that line with a repository variable `DB_SIZE_WARN_MB` (same

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Facets } from "../api/types";
+import { CATEGORIES, eventCategory } from "../lib/categories";
 import { SOURCE_DESCRIPTIONS, eventTypeLabel, formatCount, sourceLabel } from "../lib/format";
 import { EMPTY_FILTERS, type Filters, type Violence } from "../state/dashboard";
 
@@ -26,7 +27,7 @@ export function FilterBar({ facets, filters, onChange, onClear }: Props) {
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
   return (
-    <div className="filter-bar" role="toolbar" aria-label="Filters">
+    <div className="filter-bar" role="toolbar" aria-label="Filters" data-tour="filters">
       <div className="segmented" role="radiogroup" aria-label="Event class">
         {CLASSES.map((c) => (
           <button
@@ -92,10 +93,10 @@ function TypePicker({ facets, filters, onChange }: Omit<Props, "onClear">) {
     const seen = types.get(t.value);
     types.set(t.value, { count: (seen?.count ?? 0) + t.count, violent: seen?.violent ?? t.is_violent });
   }
-  const groups = [
-    { label: "Violence", violent: true },
-    { label: "Signals", violent: false },
-  ].filter((g) => filters.violence === "all" || (filters.violence === "violent") === g.violent);
+  // Grouped by the categories the map colors events by.
+  const groups = CATEGORIES.filter(
+    (g) => filters.violence === "all" || (filters.violence === "violent") === g.violent,
+  ).filter((g) => [...types].some(([value, t]) => eventCategory(value, t.violent).key === g.key));
 
   const label =
     filters.types.length === 0
@@ -112,12 +113,12 @@ function TypePicker({ facets, filters, onChange }: Omit<Props, "onClear">) {
       {open && (
         <div className="popover type-popover" role="dialog" aria-label="Event types">
           {groups.map((g) => (
-            <fieldset key={g.label}>
-              <legend>
-                <span className={`dot dot-${g.violent ? "violent" : "signals"}`} aria-hidden /> {g.label}
+            <fieldset key={g.key}>
+              <legend title={g.description}>
+                <span className="dot" style={{ background: g.color }} aria-hidden /> {g.label}
               </legend>
               {[...types.entries()]
-                .filter(([, t]) => t.violent === g.violent)
+                .filter(([value, t]) => eventCategory(value, t.violent).key === g.key)
                 .map(([value, t]) => (
                   <label key={value} className="check">
                     <input

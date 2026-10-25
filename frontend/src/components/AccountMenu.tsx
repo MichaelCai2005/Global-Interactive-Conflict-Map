@@ -28,7 +28,7 @@ export function AccountMenu({ me, onSignIn, onSaved }: Props) {
   const user = me.user;
   if (!user) {
     return (
-      <div className="account">
+      <div className="account" data-tour="account">
         <button onClick={() => onSignIn("signin")}>Sign in</button>
         {me.signups_open && (
           <button className="primary" onClick={() => onSignIn("signup")}>
@@ -41,7 +41,7 @@ export function AccountMenu({ me, onSignIn, onSaved }: Props) {
 
   const label = user.display_name || user.email;
   return (
-    <div className="account picker" ref={box}>
+    <div className="account picker" ref={box} data-tour="account">
       <button className="account-button" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="avatar" aria-hidden>
           {label.slice(0, 1).toUpperCase()}

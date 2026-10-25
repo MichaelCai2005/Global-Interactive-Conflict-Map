@@ -30,6 +30,8 @@ export interface EventOut {
   conflict_id: string | null;
   duplicate_of_id: number | null;
   attributes: Record<string, unknown>;
+  /** When GDELT first published the event (ISO time); null for UCDP and ACLED. */
+  first_reported_at: string | null;
 }
 
 export interface EventPage {
@@ -47,9 +49,19 @@ export interface LinkedEvent {
   event: EventOut;
 }
 
+export interface EventSource {
+  url: string;
+  source_name: string | null;
+  first_seen_at: string | null;
+  confidence: number | null;
+}
+
 export interface EventDetail extends EventOut {
   duplicates: LinkedEvent[];
   duplicate_of: LinkedEvent | null;
+  /** News articles about this event and its duplicates, oldest first (at most 200). */
+  sources: EventSource[];
+  source_count: number;
 }
 
 export interface TimelineBucket {
@@ -76,7 +88,8 @@ export interface Facet {
 }
 
 export interface Facets {
-  sources: Facet[];
+  /** With each source's own date range: UCDP's monthly files run weeks behind GDELT's daily ones. */
+  sources: (Facet & { first_date: string | null; last_date: string | null })[];
   event_types: (Facet & { is_violent: boolean })[];
   countries: Facet[];
   first_date: string | null;

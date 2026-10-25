@@ -14,21 +14,8 @@
   z-index: 2;
 }
 
-/* Hidden, not removed, so the map keeps its size and state; its controls set their own
-   visibility, so they are hidden too. */
-.view-board .map-pane,
-.view-board .map-pane * {
-  visibility: hidden !important;
-}
-
-.view-split .board-pane {
-  right: 45%;
-  border-right: 1px solid var(--border);
-}
-
-.view-split .map-pane {
-  left: 55%;
-}
+/* Board and map sit in resizable panels (App.tsx); the board-only view closes the map's
+   panel rather than unmounting the map, so it keeps its state. */
 
 .view-switch {
   position: absolute;

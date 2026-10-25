@@ -1,22 +1,24 @@
 """Loads a source file into Postgres: parse, validate, dedupe, upsert, then link across sources."""
 
 import io
+import json
 import logging
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
-from sqlalchemy import func, literal_column, text
+from sqlalchemy import func, literal_column, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.ingest import acled, epr, gdelt, ucdp, vdem, wdi
+from app.ingest import acled, download, epr, gdelt, ucdp, vdem, wdi
 from app.ingest.common import IndicatorValue, NormalizedEvent, ParsedIndicatorRow, ParsedRow
-from app.models import CountryIndicator, Event, IngestRun, RejectedRecord
+from app.models import CountryIndicator, Event, GdeltId, IngestRun, RejectedRecord
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +38,9 @@ INDICATOR_NAMES = {
     vdem.SOURCE: vdem.INDICATORS,
     epr.SOURCE: epr.INDICATORS,
 }
-SOURCES = sorted(PARSERS | INDICATOR_PARSERS)
+# GDELT 2.0 Mentions files add articles to GDELT events already loaded.
+MENTIONS = "gdelt-mentions"
+SOURCES = sorted([*PARSERS, *INDICATOR_PARSERS, MENTIONS])
 
 # When two sources describe the same incident, the lower number is kept as the canonical
 # record and the other is marked as its duplicate. Hand-coded datasets beat machine-coded news;
@@ -44,6 +48,9 @@ SOURCES = sorted(PARSERS | INDICATOR_PARSERS)
 SOURCE_PRIORITY = {ucdp.SOURCE: 1, acled.SOURCE: 2, gdelt.SOURCE: 3}
 
 BATCH_SIZE = 1000
+# Articles kept per event. A big story is mentioned by thousands; the first few dozen are
+# enough to read it, and a cap keeps the table from growing with each retelling.
+MAX_SOURCES_PER_EVENT = 50
 
 
 @contextmanager
@@ -63,7 +70,8 @@ def open_source_file(path: Path) -> Iterator[TextIO]:
 
 
 def collapse_duplicates(events: list[NormalizedEvent]) -> tuple[list[NormalizedEvent], int]:
-    """Merges rows that share a dedupe key, keeping the first and the highest report count."""
+    """Merges rows that share a dedupe key, keeping the first, the highest report count
+    and the earliest report time."""
     kept: dict[str, NormalizedEvent] = {}
     for event in events:
         existing = kept.get(event.dedupe_key)
@@ -71,6 +79,11 @@ def collapse_duplicates(events: list[NormalizedEvent]) -> tuple[list[NormalizedE
             kept[event.dedupe_key] = event
         else:
             existing.report_count = max(existing.report_count, event.report_count)
+            if event.first_reported_at and (
+                existing.first_reported_at is None
+                or event.first_reported_at < existing.first_reported_at
+            ):
+                existing.first_reported_at = event.first_reported_at
     return list(kept.values()), len(events) - len(kept)
 
 
@@ -87,6 +100,8 @@ def ingest_file(
     try:
         if source in INDICATOR_PARSERS:
             _load_indicators(session, run, path)
+        elif source == MENTIONS:
+            _load_mentions(session, run, path)
         else:
             _load_events(session, run, path)
         run.status = "succeeded"
@@ -137,12 +152,20 @@ def _load_events(session: Session, run: IngestRun, path: Path) -> None:
             else:
                 events.append(row.event)
 
+    # Each GDELT row is one article about an event; collapsing keeps only the first URL.
+    articles = [
+        (e.dedupe_key, int(e.source_event_id), e.source_url, e.first_reported_at)
+        for e in events
+        if run.source == gdelt.SOURCE and e.source_event_id.isdigit()
+    ]
     events, run.merged_in_file = collapse_duplicates(events)
     _save_rejected(session, run, rejected)
     for start in range(0, len(events), BATCH_SIZE):
         inserted = _upsert(session, run.id, events[start : start + BATCH_SIZE])
         run.inserted += inserted
         run.updated += len(events[start : start + BATCH_SIZE]) - inserted
+    if articles:
+        _save_gdelt_articles(session, articles)
     if run.source == ucdp.SOURCE:
         drop_superseded_ucdp(session, run.id, events)
     run.cross_source_links = link_cross_source(session, run.id)
@@ -235,6 +258,10 @@ def _upsert(session: Session, run_id: int, events: list[NormalizedEvent]) -> int
             "report_count": func.greatest(Event.report_count, stmt.excluded.report_count),
             # Fills the code in on events loaded before countries were mapped.
             "country_iso3": func.coalesce(stmt.excluded.country_iso3, Event.country_iso3),
+            # LEAST skips NULLs, so a day-only GDELT 1.0 reload keeps a 2.0 report time.
+            "first_reported_at": func.least(
+                Event.first_reported_at, stmt.excluded.first_reported_at
+            ),
         }
     else:
         # Curated sources revise past events between releases, so the newest file wins.
@@ -249,6 +276,100 @@ def _upsert(session: Session, run_id: int, events: list[NormalizedEvent]) -> int
         literal_column("(xmax = 0)")
     )
     return sum(1 for (was_inserted,) in session.execute(stmt) if was_inserted)
+
+
+def _save_gdelt_articles(
+    session: Session, articles: list[tuple[str, int, str | None, datetime | None]]
+) -> None:
+    """Records which event each GLOBALEVENTID went into, and each row's article."""
+    keys = sorted({key for key, *_ in articles})
+    ids: dict[str, int] = {}
+    for start in range(0, len(keys), BATCH_SIZE):
+        ids |= dict(
+            session.execute(
+                text(
+                    "SELECT dedupe_key, id FROM events"
+                    " WHERE source = :source AND dedupe_key = ANY(:keys)"
+                ),
+                {"source": gdelt.SOURCE, "keys": keys[start : start + BATCH_SIZE]},
+            ).all()
+        )
+    mapping = [{"global_event_id": g, "event_id": ids[k]} for k, g, _, _ in articles if k in ids]
+    for start in range(0, len(mapping), BATCH_SIZE):
+        # A GLOBALEVENTID seen again stays with the event it first went into.
+        session.execute(
+            pg_insert(GdeltId).values(mapping[start : start + BATCH_SIZE]).on_conflict_do_nothing()
+        )
+    save_articles(
+        session,
+        [
+            gdelt.Mention(g, url, gdelt.site_name(url), seen, None)
+            for _, g, url, seen in articles
+            if url and url.startswith(("http://", "https://"))
+        ],
+    )
+
+
+def save_articles(session: Session, mentions: list[gdelt.Mention]) -> int:
+    """Adds articles to the GDELT events their GLOBALEVENTIDs went into; returns how many
+    were new. Mentions of ids never loaded (cooperation events, or older than the data)
+    are skipped, and so are articles past an event's MAX_SOURCES_PER_EVENT."""
+    unique = list({(m.global_event_id, m.url): m for m in mentions}.values())
+    added = 0
+    for start in range(0, len(unique), BATCH_SIZE):
+        rows = [
+            {
+                "gdelt_id": m.global_event_id,
+                "url": m.url,
+                "source_name": m.source_name,
+                "seen_at": m.seen_at.isoformat() if m.seen_at else None,
+                "confidence": m.confidence,
+            }
+            for m in unique[start : start + BATCH_SIZE]
+        ]
+        added += session.execute(
+            text("""
+                WITH incoming AS (
+                    SELECT DISTINCT ON (g.event_id, r.url)
+                        g.event_id, r.url, r.source_name, r.seen_at, r.confidence
+                    FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(
+                        gdelt_id bigint, url text, source_name text, seen_at timestamptz,
+                        confidence smallint)
+                    JOIN gdelt_ids g ON g.global_event_id = r.gdelt_id
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM event_sources s
+                        WHERE s.event_id = g.event_id AND s.url = r.url)
+                    ORDER BY g.event_id, r.url, r.seen_at
+                ),
+                ranked AS (
+                    SELECT i.*, row_number() OVER (
+                        PARTITION BY i.event_id ORDER BY i.seen_at, i.confidence DESC, i.url
+                    ) AS n
+                    FROM incoming i
+                )
+                INSERT INTO event_sources (event_id, url, source_name, first_seen_at, confidence)
+                SELECT event_id, url, source_name, seen_at, confidence FROM ranked
+                WHERE n + (SELECT count(*) FROM event_sources s WHERE s.event_id = ranked.event_id)
+                      <= :cap
+                ON CONFLICT (event_id, url) DO NOTHING
+            """),
+            {"rows": json.dumps(rows), "cap": MAX_SOURCES_PER_EVENT},
+        ).rowcount
+    return added
+
+
+def _load_mentions(session: Session, run: IngestRun, path: Path) -> None:
+    mentions: list[gdelt.Mention] = []
+    with open_source_file(path) as stream:
+        for mention in gdelt.parse_mentions(stream):
+            run.rows_read += 1
+            if mention is None:
+                run.filtered_out += 1
+            else:
+                mentions.append(mention)
+    run.inserted = save_articles(session, mentions)
+    # The rest mention events this database doesn't hold, or articles it already lists.
+    run.merged_in_file = len(mentions) - run.inserted
 
 
 def _priority_sql(alias: str) -> str:
@@ -337,3 +458,72 @@ def link_cross_source(session: Session, run_id: int) -> int:
         """)
     )
     return inserted
+
+
+def loaded_live_slots(session: Session, slots: list[datetime]) -> set[datetime]:
+    """The GDELT 2.0 quarter hours among these whose Mentions file loaded (after their
+    Events file, so both are in)."""
+    names = [f"{s:%Y%m%d%H%M%S}.mentions.CSV.zip" for s in slots]
+    loaded = session.scalars(
+        select(IngestRun.filename).where(
+            IngestRun.source == MENTIONS,
+            IngestRun.status == "succeeded",
+            IngestRun.filename.in_(names),
+        )
+    )
+    return {datetime.strptime(n[:14], "%Y%m%d%H%M%S").replace(tzinfo=UTC) for n in loaded}
+
+
+def load_gdelt_live(
+    session: Session,
+    out_dir: Path,
+    limit: int,
+    latest: Callable[[], tuple[datetime, dict[str, str]]] = download.gdelt_live_latest,
+) -> bool:
+    """Loads each of the newest `limit` 15-minute GDELT slots not loaded yet, oldest first.
+
+    GDELT sometimes lists a file before it can be downloaded, or leaves a slot out for
+    hours, so a slot that fails or isn't there yet is tried again on every run until it
+    loads or drops out of the window; the slots after it load meanwhile. Returns whether
+    every slot GDELT has posted loaded.
+    """
+    newest, md5s = latest()
+    window = download.gdelt_live_slots(newest, limit)
+    done = loaded_live_slots(session, window)
+    pending = [s for s in window if s not in done]
+    if not pending:
+        log.info("GDELT up to %s is already loaded", f"{newest:%Y-%m-%d %H:%M}")
+    ok = True
+    for slot in pending:
+        try:
+            files = download.gdelt_live_files(slot, out_dir, md5s if slot == newest else None)
+        except Exception:
+            log.exception("could not download GDELT %s", f"{slot:%Y%m%d%H%M%S}")
+            ok = False
+            continue
+        if files is None:
+            continue
+        export, mentions = files
+        # Mentions only find events already loaded, so a failed Events file stops its slot.
+        for source, path in ((gdelt.SOURCE, export), (MENTIONS, mentions)):
+            if ingest_file(session, source, path).status != "succeeded":
+                ok = False
+                break
+    return ok
+
+
+def prune_gdelt_ids(session: Session, days: int) -> int:
+    """Forgets which event old GLOBALEVENTIDs went into, so their later Mentions are
+    skipped. GDELT's mentions of an event mostly arrive within days, and the map holds
+    millions of ids. The events and the articles already found stay."""
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    deleted = session.execute(
+        text("""
+            DELETE FROM gdelt_ids g USING events e
+            WHERE e.id = g.event_id
+              AND COALESCE(e.first_reported_at, e.event_date::timestamptz) < :cutoff
+        """),
+        {"cutoff": cutoff},
+    ).rowcount
+    session.commit()
+    return deleted

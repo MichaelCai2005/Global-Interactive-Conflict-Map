@@ -73,6 +73,7 @@ const WHY: RiskExplanation = {
       id: 7,
       source: "ucdp",
       source_event_id: "7",
+      first_reported_at: null,
       event_date: "2023-10-09",
       end_date: null,
       event_type: "state_based",

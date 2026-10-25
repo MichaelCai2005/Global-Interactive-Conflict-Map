@@ -1,5 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type Layout, type LayoutChangedMeta, useGroupRef } from "react-resizable-panels";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useMe } from "./api/account";
 import { queryString, request } from "./api/client";
 import { riskGeoJson, useRiskWeek } from "./api/risk";
@@ -9,7 +11,7 @@ import { AccountMenu } from "./components/AccountMenu";
 import { type AuthMode, AuthDialog, SignInPrompt } from "./components/AuthDialog";
 import { EventDrawer } from "./components/EventDrawer";
 import { FilterBar } from "./components/FilterBar";
-import { type MapHandle, MapView } from "./components/MapView";
+import { type MapHandle, MapView, NEW_DAYS } from "./components/MapView";
 import { OverviewPanel } from "./components/OverviewPanel";
 import { RiskPanel } from "./components/RiskPanel";
 import { SavedPanel } from "./components/SavedPanel";
@@ -19,15 +21,22 @@ import { WatchlistPanel } from "./components/WatchlistPanel";
 import { type BoardNode, useBoard, useBoardGeoJson } from "./board/api";
 import { BoardCanvas, type BoardSelection, type CanvasHandle } from "./board/BoardCanvas";
 import { BoardPanel } from "./board/BoardPanel";
+import { Tour } from "./components/Tour";
 import { Welcome } from "./components/Welcome";
-import { type DateWindow, addDays, clampWindow, formatDate, intervalFor, shiftWindow, stepFor } from "./lib/dates";
+import { NowPanel } from "./components/NowPanel";
+import { CloseButton, PaneToggles, Workspace, usePanes } from "./components/Workspace";
+import { type DateWindow, clampWindow, daysBetween, formatDate, intervalFor, shiftWindow, stepFor } from "./lib/dates";
+import { CATEGORIES, type ColorBy, DEATH_STOPS, NO_DEATHS_COLOR } from "./lib/categories";
 import { formatCount } from "./lib/format";
 import { cellSizeForZoom, parseBbox } from "./lib/geo";
+import { latestWindow } from "./lib/now";
 import type { Story } from "./lib/stories";
 import { type Panel, initialState, reducer, toSearch } from "./state/dashboard";
 import { COLORS } from "./theme";
 
 const WELCOME_KEY = "conflict-map:welcome-seen";
+const COLOR_BY_KEY = "conflict-map:color-by";
+const WORLD: Bbox = [-150, -50, 170, 70];
 
 type BoardView = "board" | "split" | "map";
 
@@ -37,6 +46,8 @@ export function App() {
   const map = useRef<MapHandle>(null);
   const queryClient = useQueryClient();
   const [welcome, setWelcome] = useState(() => !window.location.search && !seenWelcome());
+  // While the tour runs, the tab it began on, to go back to afterwards.
+  const [tour, setTour] = useState<Panel | null>(null);
   // Who is signed in. A visitor to the public site must sign in to keep anything.
   const me = useMe().data;
   const canSave = me !== undefined && me.workspace !== null;
@@ -48,12 +59,14 @@ export function App() {
   }, [facets.data]);
   const domain = state.range && full ? clampWindow(state.range, full) : full;
 
-  // Until the URL or the user picks one, show the most recent year of data.
+  // Until the URL or the user picks one, show the newest week of data, on a timeline of the
+  // past year so that week has room to be seen.
   useEffect(() => {
     if (full && !state.window) {
-      dispatch({ type: "window", window: clampWindow({ start: addDays(full.end, -364), end: full.end }, full) });
+      if (!state.range) dispatch({ type: "range", range: clampWindow(latestWindow(full.end, 365), full) });
+      dispatch({ type: "window", window: clampWindow(latestWindow(full.end, 7), full) });
     }
-  }, [full, state.window]);
+  }, [full, state.window, state.range]);
   const timeWindow = state.window && domain ? clampWindow(state.window, domain) : null;
 
   const interval = domain ? intervalFor(domain.start, domain.end) : "month";
@@ -76,9 +89,41 @@ export function App() {
   const boardLayer = useBoardGeoJson(boardId, openBoard?.updated_at).data ?? null;
   // With a board open, the main area shows its canvas, the map, or both side by side.
   const [boardView, setBoardView] = useState<BoardView>("board");
+  const [colorBy, setColorBy] = useState<ColorBy>(savedColorBy);
+  const chooseColorBy = (value: ColorBy) => {
+    setColorBy(value);
+    try {
+      localStorage.setItem(COLOR_BY_KEY, value);
+    } catch {
+      // Private windows can refuse storage; the choice then lasts this visit only.
+    }
+  };
   const view: BoardView = boardId === null ? "map" : boardView;
   const canvas = useRef<CanvasHandle>(null);
   useEffect(() => setBoardSelection(null), [boardId]);
+  const panes = usePanes();
+  // Board and map share the main area. The view buttons close one or the other (the map
+  // stays mounted, so it keeps its state), the split comes back as last dragged, and
+  // dragging the edge between them shut picks the matching view.
+  const split = useGroupRef();
+  const lastSplit = useRef<Layout>({ "split-board": 55, "split-map": 45 });
+  useEffect(() => {
+    if (boardId === null) return;
+    split.current?.setLayout(
+      view === "board"
+        ? { "split-board": 100, "split-map": 0 }
+        : view === "map"
+          ? { "split-board": 0, "split-map": 100 }
+          : lastSplit.current,
+    );
+  }, [view, boardId, split]);
+  const onSplitChanged = (layout: Layout, meta: LayoutChangedMeta) => {
+    if (boardId === null) return;
+    if (layout["split-board"]! > 0 && layout["split-map"]! > 0) lastSplit.current = layout;
+    if (meta.isUserInteraction) {
+      setBoardView(layout["split-map"] === 0 ? "board" : layout["split-board"] === 0 ? "map" : "split");
+    }
+  };
   const openTasks = useTasks(canSave).data?.filter((t) => t.status !== "done").length ?? 0;
 
   // Playback: once the map has the current window's data, wait a beat, then step forward.
@@ -110,6 +155,21 @@ export function App() {
     dispatch({ type: "play", playing });
   };
 
+  /** Moves the window to end on the newest data, keeping its length unless given one. */
+  const showLatest = (days?: number) => {
+    if (!full || !timeWindow) return;
+    const next = clampWindow(latestWindow(full.end, days ?? daysBetween(timeWindow.start, timeWindow.end) + 1), full);
+    // A zoomed timeline that stops short of the newest data stretches to take it in.
+    if (state.range && (state.range.end < next.end || state.range.start > next.start)) {
+      dispatch({
+        type: "range",
+        range: { start: state.range.start < next.start ? state.range.start : next.start, end: full.end },
+      });
+    }
+    dispatch({ type: "play", playing: false });
+    dispatch({ type: "window", window: next });
+  };
+
   const showEvent = (event: { id: number; latitude: number; longitude: number }) => {
     dispatch({ type: "select", eventId: event.id });
     map.current?.flyTo(event.longitude, event.latitude);
@@ -132,10 +192,28 @@ export function App() {
     if (found) map.current?.fitBbox(found.bbox);
   };
 
+  const startNow = () => {
+    closeWelcome();
+    dispatch({ type: "panel", panel: "now" });
+    showLatest(7);
+    map.current?.fitBbox(WORLD);
+  };
+
   const startStory = (story: Story) => {
     closeWelcome();
     dispatch({ type: "story", range: story.range, windowDays: story.windowDays });
     map.current?.fitBbox(story.bbox);
+  };
+
+  const startTour = () => {
+    closeWelcome();
+    // The tour points at the side panel and timeline, so open them if they were closed.
+    if (panes.wide) {
+      panes.sidebar.toggle(true);
+      panes.timeline.toggle(true);
+    }
+    dispatch({ type: "select", eventId: null });
+    setTour(state.panel);
   };
 
   const closeWelcome = () => {
@@ -182,210 +260,265 @@ export function App() {
           onChange={(filters) => dispatch({ type: "filters", filters })}
           onClear={() => dispatch({ type: "clearFilters" })}
         />
-        <button className="ghost" onClick={() => setWelcome(true)}>
+        <PaneToggles panes={panes} />
+        <button className="ghost" data-tour="help" onClick={() => setWelcome(true)}>
           Stories &amp; help
         </button>
         <AccountMenu me={me} onSignIn={setAuth} onSaved={() => setPanel("saved")} />
       </header>
 
-      <aside className="sidebar">
-        <nav className="tabs" role="tablist">
-          {(
-            [
-              ["overview", "Overview"],
-              ["risk", "Risk"],
-              ["board", "Boards"],
-              ["watchlist", "Watchlist"],
-              ["tasks", openTasks ? `Tasks (${openTasks})` : "Tasks"],
-              ["saved", "Saved"],
-            ] as const
-          ).map(([panel, label]) => (
-            <button
-              key={panel}
-              role="tab"
-              aria-selected={state.panel === panel}
-              className={state.panel === panel ? "is-on" : ""}
-              onClick={() => setPanel(panel)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-        {facets.error ? (
-          <div className="panel-body">
-            <p className="error">
-              Can't reach the API ({facets.error.message}). Start the backend with{" "}
-              <code>uvicorn app.main:app</code> in <code>backend/</code>, then reload.
-            </p>
-          </div>
-        ) : !timeWindow || !domain ? (
-          <div className="panel-body">
-            <p className="muted">Loading…</p>
-          </div>
-        ) : state.panel === "overview" ? (
-          <OverviewPanel
-            scope={{ filters: state.filters, window: timeWindow, bbox: countingBbox }}
-            inView={countingBbox !== null}
-            onCountry={showCountry}
-            onEvent={showEvent}
-          />
-        ) : state.panel === "risk" ? (
-          <RiskPanel
-            week={timeWindow.end}
-            onEvent={showEvent}
-            selected={riskCountry}
-            onSelect={setRiskCountry}
-            onCountry={(r) => {
-              if (r.longitude !== null && r.latitude !== null) map.current?.flyTo(r.longitude, r.latitude, 5);
-            }}
-          />
-        ) : state.panel === "board" ? (
-          <BoardPanel
-            boardId={state.boardId}
-            selection={boardSelection}
-            mapCenter={state.camera}
-            onOpen={(id) => dispatch({ type: "board", boardId: id })}
-            onSelect={setBoardSelection}
-            onFocus={focusCard}
-            onShowOnMap={showOnMap}
-            onWindow={(w) => dispatch({ type: "window", window: clampWindow(w, domain) })}
-          />
-        ) : (state.panel === "watchlist" || state.panel === "tasks" || state.panel === "saved") && !canSave ? (
-          me ? (
-            signInPrompt(
-              state.panel === "watchlist"
-                ? "a watchlist of places"
-                : state.panel === "tasks"
-                  ? "a list of follow-up tasks"
-                  : "saved map views and searches",
-            )
-          ) : (
-            <div className="panel-body">
-              <p className="muted">Loading…</p>
+      <Workspace
+        panes={panes}
+        sidebar={
+          <aside className="sidebar" data-tour="sidebar">
+            <div className="sidebar-head">
+              <nav className="tabs" role="tablist">
+                {(
+                  [
+                    ["now", "Now"],
+                    ["overview", "Overview"],
+                    ["risk", "Risk"],
+                    ["board", "Boards"],
+                    ["watchlist", "Watchlist"],
+                    ["tasks", openTasks ? `Tasks (${openTasks})` : "Tasks"],
+                    ["saved", "Saved"],
+                  ] as const
+                ).map(([panel, label]) => (
+                  <button
+                    key={panel}
+                    data-tour={`tab-${panel}`}
+                    role="tab"
+                    aria-selected={state.panel === panel}
+                    className={state.panel === panel ? "is-on" : ""}
+                    onClick={() => setPanel(panel)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </nav>
+              {panes.wide && <CloseButton label="Close side panel" onClick={() => panes.sidebar.toggle(false)} />}
             </div>
-          )
-        ) : state.panel === "saved" ? (
-          <SavedPanel
-            filters={state.filters}
-            window={timeWindow}
-            query={toSearch({ ...state, panel: "overview", playing: false })}
-            onRestore={restoreView}
-            onBoard={(id) => dispatch({ type: "board", boardId: id })}
-          />
-        ) : state.panel === "watchlist" ? (
-          <WatchlistPanel
-            filters={state.filters}
-            window={timeWindow}
-            domain={domain}
-            interval={interval}
-            viewBbox={state.viewBbox}
-            onOpen={openWatchItem}
-          />
-        ) : (
-          <TasksPanel onEvent={showEvent} onWatchItem={openWatchItem} />
-        )}
-      </aside>
-
-      <main className={`map-area view-${view}${boardId !== null ? " board-open" : ""}`}>
-        {boardId !== null && (
-          <div className="view-switch segmented small" role="tablist" aria-label="Show">
-            {(
-              [
-                ["board", "Board"],
-                ["split", "Board + map"],
-                ["map", "Map"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                role="tab"
-                aria-selected={view === value}
-                className={view === value ? "is-on" : ""}
-                onClick={() => setBoardView(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-        {openBoard && view !== "map" && (
-          <div className="board-pane">
-            <BoardCanvas ref={canvas} board={openBoard} selection={boardSelection} onSelect={setBoardSelection} />
-          </div>
-        )}
-        <div className="map-pane">
-          <MapView
-            ref={map}
-            initialCamera={state.camera}
-            layer={layer.data}
-            window={timeWindow}
-            selected={selected ? { lon: selected.longitude, lat: selected.latitude } : null}
-            risk={riskLayer}
-            riskSelected={riskCountry}
-            board={boardId !== null ? boardLayer : null}
-            boardSelected={boardNode}
-            onBoardSelect={(id) => {
-              setBoardSelection({ type: "node", id });
-              canvas.current?.centerOn(id);
-            }}
-            onMove={(camera, viewBbox) => dispatch({ type: "camera", camera, viewBbox })}
-            onSelect={(eventId) => dispatch({ type: "select", eventId })}
-            onRiskSelect={setRiskCountry}
-          />
-          {riskMode ? (
-            <>
-              <div className="map-status" aria-live="polite">
-                {risk.error
-                  ? `Could not load risk scores: ${risk.error.message}`
-                  : risk.data
-                    ? `Risk scores for the week of ${formatDate(risk.data.week)} · ${formatCount(riskLayer?.features.length ?? 0)} countries`
-                    : "Loading risk scores…"}
-                {risk.isFetching && <span className="spinner" aria-label="Loading" />}
+            {facets.error ? (
+              <div className="panel-body">
+                <p className="error">
+                  Can't reach the API ({facets.error.message}). Start the backend with{" "}
+                  <code>uvicorn app.main:app</code> in <code>backend/</code>, then reload.
+                </p>
               </div>
-              <RiskLegend />
-            </>
-          ) : (
-            <>
-              <MapStatus layer={layer.data} fetching={layer.isFetching} error={layer.error} />
-              <Legend grid={layer.data?.mode === "grid"} />
-            </>
-          )}
-          {state.selectedEventId !== null && (
-            <EventDrawer
-              eventId={state.selectedEventId}
-              onClose={() => dispatch({ type: "select", eventId: null })}
-              onSelect={showEvent}
-              onShowTasks={() => setPanel("tasks")}
-            />
-          )}
-        </div>
-      </main>
+            ) : !timeWindow || !domain ? (
+              <div className="panel-body">
+                <p className="muted">Loading…</p>
+              </div>
+            ) : state.panel === "now" && facets.data ? (
+              <NowPanel
+                facets={facets.data}
+                filters={state.filters}
+                bbox={countingBbox}
+                window={timeWindow}
+                onShowLatest={showLatest}
+                onEvent={showEvent}
+                onCountry={showCountry}
+                onRisk={(iso3, lon, lat) => {
+                  setRiskCountry(iso3);
+                  setPanel("risk");
+                  if (lon !== null && lat !== null) map.current?.flyTo(lon, lat, 5);
+                }}
+              />
+            ) : state.panel === "overview" ? (
+              <OverviewPanel
+                scope={{ filters: state.filters, window: timeWindow, bbox: countingBbox }}
+                inView={countingBbox !== null}
+                onCountry={showCountry}
+                onEvent={showEvent}
+              />
+            ) : state.panel === "risk" ? (
+              <RiskPanel
+                week={timeWindow.end}
+                onEvent={showEvent}
+                selected={riskCountry}
+                onSelect={setRiskCountry}
+                onCountry={(r) => {
+                  if (r.longitude !== null && r.latitude !== null) map.current?.flyTo(r.longitude, r.latitude, 5);
+                }}
+              />
+            ) : state.panel === "board" ? (
+              <BoardPanel
+                boardId={state.boardId}
+                selection={boardSelection}
+                mapCenter={state.camera}
+                onOpen={(id) => dispatch({ type: "board", boardId: id })}
+                onSelect={setBoardSelection}
+                onFocus={focusCard}
+                onShowOnMap={showOnMap}
+                onWindow={(w) => dispatch({ type: "window", window: clampWindow(w, domain) })}
+              />
+            ) : (state.panel === "watchlist" || state.panel === "tasks" || state.panel === "saved") && !canSave ? (
+              me ? (
+                signInPrompt(
+                  state.panel === "watchlist"
+                    ? "a watchlist of places"
+                    : state.panel === "tasks"
+                      ? "a list of follow-up tasks"
+                      : "saved map views and searches",
+                )
+              ) : (
+                <div className="panel-body">
+                  <p className="muted">Loading…</p>
+                </div>
+              )
+            ) : state.panel === "saved" ? (
+              <SavedPanel
+                filters={state.filters}
+                window={timeWindow}
+                query={toSearch({ ...state, panel: "overview", playing: false })}
+                onRestore={restoreView}
+                onBoard={(id) => dispatch({ type: "board", boardId: id })}
+              />
+            ) : state.panel === "watchlist" ? (
+              <WatchlistPanel
+                filters={state.filters}
+                window={timeWindow}
+                domain={domain}
+                interval={interval}
+                viewBbox={state.viewBbox}
+                onOpen={openWatchItem}
+              />
+            ) : (
+              <TasksPanel onEvent={showEvent} onWatchItem={openWatchItem} />
+            )}
+          </aside>
+        }
+        map={
+          <main className={`map-area view-${view}${boardId !== null ? " board-open" : ""}`}>
+            {boardId !== null && (
+              <div className="view-switch segmented small" role="tablist" aria-label="Show">
+                {(
+                  [
+                    ["board", "Board"],
+                    ["split", "Board + map"],
+                    ["map", "Map"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    role="tab"
+                    aria-selected={view === value}
+                    className={view === value ? "is-on" : ""}
+                    onClick={() => setBoardView(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <ResizablePanelGroup id="board-split" orientation="horizontal" groupRef={split} onLayoutChanged={onSplitChanged}>
+              {boardId !== null && (
+                <ResizablePanel id="split-board" className="pane" defaultSize="55%" minSize="20%" collapsible>
+                  {openBoard && view !== "map" && (
+                    <div className="board-pane">
+                      <BoardCanvas ref={canvas} board={openBoard} selection={boardSelection} onSelect={setBoardSelection} />
+                    </div>
+                  )}
+                </ResizablePanel>
+              )}
+              {boardId !== null && <ResizableHandle withHandle className="workspace-handle" />}
+              <ResizablePanel
+                id="split-map"
+                className="pane"
+                minSize="20%"
+                collapsible={boardId !== null}
+                style={{ overflow: "hidden" }}
+              >
+                <div className="map-pane" data-tour="map">
+                  <MapView
+                    ref={map}
+                    initialCamera={state.camera}
+                    layer={layer.data}
+                    colorBy={colorBy}
+                    window={timeWindow}
+                    latest={full?.end}
+                    selected={selected ? { lon: selected.longitude, lat: selected.latitude } : null}
+                    risk={riskLayer}
+                    riskSelected={riskCountry}
+                    board={boardId !== null ? boardLayer : null}
+                    boardSelected={boardNode}
+                    onBoardSelect={(id) => {
+                      setBoardSelection({ type: "node", id });
+                      canvas.current?.centerOn(id);
+                    }}
+                    onMove={(camera, viewBbox) => dispatch({ type: "camera", camera, viewBbox })}
+                    onSelect={(eventId) => dispatch({ type: "select", eventId })}
+                    onRiskSelect={setRiskCountry}
+                  />
+                  {riskMode ? (
+                    <>
+                      <div className="map-status" aria-live="polite">
+                        {risk.error
+                          ? `Could not load risk scores: ${risk.error.message}`
+                          : risk.data
+                            ? `Risk scores for the week of ${formatDate(risk.data.week)} · ${formatCount(riskLayer?.features.length ?? 0)} countries`
+                            : "Loading risk scores…"}
+                        {risk.isFetching && <span className="spinner" aria-label="Loading" />}
+                      </div>
+                      <RiskLegend />
+                    </>
+                  ) : (
+                    <>
+                      <MapStatus layer={layer.data} fetching={layer.isFetching} error={layer.error} />
+                      <Legend
+                        colorBy={colorBy}
+                        onColorBy={chooseColorBy}
+                        grid={layer.data?.mode === "grid"}
+                        ringed={boardId === null && !!full && !!timeWindow && daysBetween(timeWindow.end, full.end) < NEW_DAYS}
+                      />
+                    </>
+                  )}
+                  {state.selectedEventId !== null && (
+                    <EventDrawer
+                      eventId={state.selectedEventId}
+                      onClose={() => dispatch({ type: "select", eventId: null })}
+                      onSelect={showEvent}
+                      onShowTasks={() => setPanel("tasks")}
+                    />
+                  )}
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </main>
+        }
+        timeline={
+          <footer className="timeline-area">
+            {domain && full && timeWindow ? (
+              <TimelineBar
+                buckets={timeline.data?.buckets ?? []}
+                interval={timeline.data?.interval ?? interval}
+                domain={domain}
+                full={full}
+                window={timeWindow}
+                loading={timeline.isFetching}
+                playing={state.playing}
+                speed={state.speed}
+                followView={state.followView}
+                zoomedIn={state.viewBbox !== null}
+                onWindow={(w) => dispatch({ type: "window", window: w })}
+                onRange={(range) => dispatch({ type: "range", range })}
+                onPlay={play}
+                onSpeed={(speed) => dispatch({ type: "speed", speed })}
+                onFollowView={(followView) => dispatch({ type: "followView", followView })}
+                onLatest={() => showLatest()}
+                onClose={panes.wide ? () => panes.timeline.toggle(false) : undefined}
+              />
+            ) : (
+              <div className="timeline-placeholder muted">Loading timeline…</div>
+            )}
+          </footer>
+        }
+      />
 
-      <footer className="timeline-area">
-        {domain && full && timeWindow ? (
-          <TimelineBar
-            buckets={timeline.data?.buckets ?? []}
-            interval={timeline.data?.interval ?? interval}
-            domain={domain}
-            full={full}
-            window={timeWindow}
-            loading={timeline.isFetching}
-            playing={state.playing}
-            speed={state.speed}
-            followView={state.followView}
-            zoomedIn={state.viewBbox !== null}
-            onWindow={(w) => dispatch({ type: "window", window: w })}
-            onRange={(range) => dispatch({ type: "range", range })}
-            onPlay={play}
-            onSpeed={(speed) => dispatch({ type: "speed", speed })}
-            onFollowView={(followView) => dispatch({ type: "followView", followView })}
-          />
-        ) : (
-          <div className="timeline-placeholder muted">Loading timeline…</div>
-        )}
-      </footer>
-
-      {welcome && <Welcome facets={facets.data} onStory={startStory} onClose={closeWelcome} />}
+      {welcome && (
+        <Welcome facets={facets.data} onTour={startTour} onNow={startNow} onStory={startStory} onClose={closeWelcome} />
+      )}
+      {tour && <Tour startPanel={tour} onPanel={setPanel} onClose={() => setTour(null)} />}
       {auth && <AuthDialog mode={auth} signupsOpen={me?.signups_open ?? true} onClose={() => setAuth(null)} />}
     </div>
   );
@@ -417,10 +550,51 @@ function MapStatus({
   );
 }
 
-function Legend({ grid }: { grid: boolean }) {
+function Legend({
+  colorBy,
+  onColorBy,
+  grid,
+  ringed,
+}: {
+  colorBy: ColorBy;
+  onColorBy(value: ColorBy): void;
+  grid: boolean;
+  ringed: boolean;
+}) {
   return (
-    <div className="legend map-legend">
-      {grid ? (
+    <div className="legend map-legend" data-tour="legend">
+      <div className="segmented small" role="radiogroup" aria-label="Color events by">
+        {(
+          [
+            ["type", "Type"],
+            ["deaths", "Deaths"],
+          ] as const
+        ).map(([value, label]) => (
+          <button key={value} role="radio" aria-checked={colorBy === value} className={colorBy === value ? "is-on" : ""} onClick={() => onColorBy(value)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {colorBy === "deaths" ? (
+        <>
+          <div className="legend-title">{grid ? "Deaths in each area" : "Deaths per event"}</div>
+          <div
+            className="legend-ramp"
+            style={{ background: `linear-gradient(90deg, ${DEATH_STOPS.map(([, c]) => c).join(", ")})` }}
+          />
+          <div className="legend-ends small">
+            {DEATH_STOPS.map(([n], i) => (
+              <span key={n}>
+                {formatCount(n)}
+                {i === DEATH_STOPS.length - 1 && "+"}
+              </span>
+            ))}
+          </div>
+          <span title="GDELT news reports and most signals carry no death count">
+            <span className="swatch round" style={{ background: NO_DEATHS_COLOR }} /> None recorded
+          </span>
+        </>
+      ) : grid ? (
         <>
           <div className="legend-title">Share of events that are violent</div>
           <div
@@ -432,19 +606,26 @@ function Legend({ grid }: { grid: boolean }) {
             <span>Mixed</span>
             <span>Violence</span>
           </div>
-          <div className="small muted">Circle size: number of events</div>
         </>
+      ) : (
+        CATEGORIES.map((c) => (
+          <span key={c.key} title={c.description}>
+            <span className="swatch round" style={{ background: c.color }} /> {c.label}
+          </span>
+        ))
+      )}
+      {grid ? (
+        <div className="small muted">Circle size: number of events</div>
       ) : (
         <>
           <span>
-            <span className="swatch round" style={{ background: COLORS.violence }} /> Violence
-          </span>
-          <span>
-            <span className="swatch round" style={{ background: COLORS.signal }} /> Signal
-          </span>
-          <span>
             <span className="swatch round hollow" /> Location known to country only
           </span>
+          {ringed && (
+            <span>
+              <span className="swatch round ringed" /> Newest {NEW_DAYS} days of data
+            </span>
+          )}
           <span className="muted">Size: deaths · faded: earlier in window</span>
         </>
       )}
@@ -454,7 +635,7 @@ function Legend({ grid }: { grid: boolean }) {
 
 function RiskLegend() {
   return (
-    <div className="legend map-legend">
+    <div className="legend map-legend" data-tour="legend">
       <div className="legend-title">Risk score this week</div>
       <div
         className="legend-ramp"
@@ -471,6 +652,14 @@ function RiskLegend() {
       <div className="small muted">Larger and brighter: higher score. Click a country for why.</div>
     </div>
   );
+}
+
+function savedColorBy(): ColorBy {
+  try {
+    return localStorage.getItem(COLOR_BY_KEY) === "deaths" ? "deaths" : "type";
+  } catch {
+    return "type";
+  }
 }
 
 function seenWelcome(): boolean {

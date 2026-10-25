@@ -10,12 +10,19 @@ Three layouts exist and are told apart by column count:
   58 columns: GDELT 1.0 daily files (April 2013 onward), adds SOURCEURL
   61 columns: GDELT 2.0 15-minute files (2015 onward), adds ADM2 codes
 Codebook: http://data.gdeltproject.org/documentation/GDELT-Event_Codebook-V2.0.pdf
+
+GDELT 2.0 also publishes a Mentions file every 15 minutes: one row per article that
+mentioned an event, keyed by GLOBALEVENTID, including events first seen in earlier files.
+parse_mentions reads those, so an event can list every article that reported it.
 """
 
 import csv
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TextIO
+from urllib.parse import urlsplit
 
 from app import countries
 from app.ingest.common import (
@@ -25,6 +32,7 @@ from app.ingest.common import (
     clean_text,
     normalize_country,
     parse_compact_date,
+    parse_compact_timestamp,
     parse_float,
     parse_int,
     validate_event,
@@ -172,8 +180,70 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
             "actor2_code": actor2_code or None,
             "num_sources": clean_text(raw.get("NumSources")),
         },
+        first_reported_at=parse_compact_timestamp(raw.get("DATEADDED")),
     )
     reasons = validate_event(event)
     if reasons:
         return ParsedRow(row_number, raw, reasons=reasons)
     return ParsedRow(row_number, raw, event=event)
+
+
+def site_name(url: str) -> str | None:
+    """The site an article is on: "https://www.bbc.co.uk/news/x" -> "bbc.co.uk"."""
+    host = urlsplit(url).hostname
+    return host.removeprefix("www.") if host else None
+
+
+MENTION_COLUMNS = [
+    "GLOBALEVENTID", "EventTimeDate", "MentionTimeDate", "MentionType", "MentionSourceName",
+    "MentionIdentifier", "SentenceID", "Actor1CharOffset", "Actor2CharOffset",
+    "ActionCharOffset", "InRawText", "Confidence", "MentionDocLen", "MentionDocTone",
+    "MentionDocTranslationInfo", "Extras",
+]  # fmt: skip
+# MentionType 1 is a web article, whose MentionIdentifier is its URL. The others are
+# citations, broadcast transcripts and archives with no link to show.
+WEB_MENTION = "1"
+
+
+@dataclass
+class Mention:
+    global_event_id: int
+    url: str
+    source_name: str | None
+    seen_at: datetime | None
+    confidence: int | None
+
+
+def parse_mentions(stream: TextIO) -> Iterator[Mention | None]:
+    """One Mention per web article row; None for a row that is not one or cannot be read."""
+    csv.field_size_limit(sys.maxsize)
+    reader = csv.reader(stream, delimiter="	", quoting=csv.QUOTE_NONE)
+    for values in reader:
+        if not values or values == [""]:
+            continue
+        if len(values) != len(MENTION_COLUMNS):
+            yield None
+            continue
+        raw = dict(zip(MENTION_COLUMNS, values, strict=True))
+        url = clean_text(raw["MentionIdentifier"])
+        try:
+            event_id = int(raw["GLOBALEVENTID"])
+            seen_at = parse_compact_timestamp(raw["MentionTimeDate"])
+            confidence = parse_int(raw["Confidence"])
+        except ValueError:
+            yield None
+            continue
+        if (
+            raw["MentionType"] != WEB_MENTION
+            or not url
+            or not url.startswith(("http://", "https://"))
+        ):
+            yield None
+            continue
+        yield Mention(
+            global_event_id=event_id,
+            url=url,
+            source_name=clean_text(raw["MentionSourceName"]) or site_name(url),
+            seen_at=seen_at,
+            confidence=confidence,
+        )

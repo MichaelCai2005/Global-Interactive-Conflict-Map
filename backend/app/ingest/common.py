@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 GEO_PRECISIONS = ("exact", "admin", "country")
@@ -36,6 +36,7 @@ class NormalizedEvent:
     source_url: str | None = None
     conflict_id: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
+    first_reported_at: datetime | None = None
 
 
 @dataclass
@@ -120,6 +121,14 @@ def parse_compact_date(value: str | None) -> date | None:
     """GDELT's YYYYMMDD."""
     value = clean_text(value)
     return None if value is None else datetime.strptime(value, "%Y%m%d").date()
+
+
+def parse_compact_timestamp(value: str | None) -> datetime | None:
+    """GDELT 2.0's YYYYMMDDHHMMSS, in UTC. GDELT 1.0's day-only YYYYMMDD gives None."""
+    value = clean_text(value)
+    if value is None or len(value) != 14:
+        return None
+    return datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
 
 
 _PARENTHETICAL = re.compile(r"\s*\(.*?\)")

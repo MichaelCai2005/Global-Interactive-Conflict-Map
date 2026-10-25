@@ -82,10 +82,12 @@ export interface Scope {
   filters: Filters;
   window?: DateWindow | null;
   bbox?: Bbox | null;
+  /** Only events GDELT first published at or after this ISO time. */
+  reportedSince?: string | null;
 }
 
 /** The backend's shared event filters (see EventFilters in backend/app/api/events.py). */
-export function scopeParams({ filters, window, bbox }: Scope): Params {
+export function scopeParams({ filters, window, bbox, reportedSince }: Scope): Params {
   return {
     source: filters.sources,
     event_type: filters.types,
@@ -94,5 +96,6 @@ export function scopeParams({ filters, window, bbox }: Scope): Params {
     start: window?.start,
     end: window?.end,
     bbox: bbox ? bboxToString(bbox) : null,
+    reported_since: reportedSince,
   };
 }

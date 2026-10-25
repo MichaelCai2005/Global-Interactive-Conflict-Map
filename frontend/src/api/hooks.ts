@@ -71,7 +71,12 @@ export function useCountries(scope: Scope, limit: number, enabled = true) {
 }
 
 export function useDeadliest(scope: Scope, limit: number, enabled = true) {
-  const params = { ...scopeParams(scope), sort: "fatalities", violent: true, limit };
+  return useViolentEvents(scope, "fatalities", limit, enabled);
+}
+
+/** Violent events under the scope, deadliest or most reported (by news articles) first. */
+export function useViolentEvents(scope: Scope, sort: "fatalities" | "reports", limit: number, enabled = true) {
+  const params = { ...scopeParams(scope), sort, violent: true, limit };
   return useQuery({
     queryKey: ["events", params],
     queryFn: () => request<EventPage>(`/events${queryString(params)}`),
