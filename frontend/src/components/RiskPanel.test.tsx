@@ -78,6 +78,7 @@ const WHY: RiskExplanation = {
       end_date: null,
       event_type: "state_based",
       is_violent: true,
+      conflict_type: "state_based",
       country: "Israel",
       admin1: null,
       location_name: "Jabaliyah refugee camp",

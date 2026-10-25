@@ -1,6 +1,7 @@
 // Mirrors backend/app/schemas.py. Dates are ISO strings (YYYY-MM-DD).
 
 import type { FeatureCollection, Point } from "geojson";
+import type { ConflictType } from "../lib/categories";
 
 export type Bbox = [minLon: number, minLat: number, maxLon: number, maxLat: number];
 export type Interval = "day" | "week" | "month";
@@ -13,6 +14,8 @@ export interface EventOut {
   end_date: string | null;
   event_type: string;
   is_violent: boolean;
+  /** UCDP's kind of violence; inferred from the sides for ACLED and GDELT, null when unclear or not violent. */
+  conflict_type: ConflictType | null;
   country: string | null;
   admin1: string | null;
   location_name: string | null;
@@ -107,6 +110,7 @@ export interface PointProps {
   day: number;
   type: string;
   violent: boolean;
+  kind: ConflictType | null;
   deaths: number;
   source: string;
   precision: EventOut["geo_precision"];
@@ -116,6 +120,10 @@ export interface CellProps {
   events: number;
   violent: number;
   signals: number;
+  /** Violent events by kind; the rest of `violent` is unclear. */
+  state_based: number;
+  non_state: number;
+  one_sided: number;
   deaths: number;
 }
 

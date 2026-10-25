@@ -256,6 +256,8 @@ def _upsert(session: Session, run_id: int, events: list[NormalizedEvent]) -> int
         # A GDELT fingerprint seen again (a later file, or a re-run) is the same incident.
         changes = {
             "report_count": func.greatest(Event.report_count, stmt.excluded.report_count),
+            # A later load sorts the event by the current rules.
+            "conflict_type": stmt.excluded.conflict_type,
             # Fills the code in on events loaded before countries were mapped.
             "country_iso3": func.coalesce(stmt.excluded.country_iso3, Event.country_iso3),
             # LEAST skips NULLs, so a day-only GDELT 1.0 reload keeps a 2.0 report time.

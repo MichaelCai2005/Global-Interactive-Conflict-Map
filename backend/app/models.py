@@ -89,6 +89,10 @@ class Event(Base):
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     # When GDELT first published the event, to the quarter hour; empty for other sources.
     first_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Which of UCDP's kinds of violence a violent event is ("state_based", "non_state",
+    # "one_sided"), inferred from its sides for ACLED and GDELT; NULL when unclear or not
+    # violent. See app.conflict_type.
+    conflict_type: Mapped[str | None] = mapped_column(String(16))
     duplicate_of_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("events.id", ondelete="SET NULL"), index=True
     )

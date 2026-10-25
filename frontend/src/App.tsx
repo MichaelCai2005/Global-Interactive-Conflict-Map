@@ -37,7 +37,6 @@ import { latestWindow } from "./lib/now";
 import { hideSplash } from "./lib/splash";
 import type { Story } from "./lib/stories";
 import { type Panel, initialState, reducer, toSearch } from "./state/dashboard";
-import { COLORS } from "./theme";
 
 const WELCOME_KEY = "conflict-map:welcome-seen";
 const COLOR_BY_KEY = "conflict-map:color-by";
@@ -678,25 +677,15 @@ function Legend({
             <span className="swatch round" style={{ background: NO_DEATHS_COLOR }} /> None recorded
           </span>
         </>
-      ) : grid ? (
-        <>
-          <div className="legend-title">Share of events that are violent</div>
-          <div
-            className="legend-ramp"
-            style={{ background: `linear-gradient(90deg, ${COLORS.signal}, ${COLORS.neutral}, ${COLORS.violence})` }}
-          />
-          <div className="legend-ends small">
-            <span>Signals</span>
-            <span>Mixed</span>
-            <span>Violence</span>
-          </div>
-        </>
       ) : (
-        CATEGORIES.map((c) => (
-          <span key={c.key} title={c.description}>
-            <span className="swatch round" style={{ background: c.color }} /> {c.label}
-          </span>
-        ))
+        <>
+          {grid && <div className="legend-title">Most common in each area</div>}
+          {CATEGORIES.map((c) => (
+            <span key={c.key} title={c.description}>
+              <span className="swatch round" style={{ background: c.color }} /> {c.label}
+            </span>
+          ))}
+        </>
       )}
       {grid ? (
         <div className="small muted">Circle size: number of events</div>

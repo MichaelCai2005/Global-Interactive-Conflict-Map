@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import TextIO
 from urllib.parse import urlsplit
 
-from app import countries
+from app import conflict_type, countries
 from app.ingest.common import (
     FieldErrors,
     NormalizedEvent,
@@ -147,6 +147,7 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
     actor1_code = clean_text(raw.get("Actor1Code")) or ""
     actor2_code = clean_text(raw.get("Actor2Code")) or ""
     place = clean_text(raw.get("ActionGeo_FullName"))
+    violent = root in VIOLENT_ROOTS
     # Many articles about one incident produce many rows that differ only in id and counts.
     fingerprint = "|".join(
         [event_date.isoformat(), event_code, actor1_code, actor2_code, f"{lat:.3f}", f"{lon:.3f}"]
@@ -158,7 +159,15 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
         dedupe_key=fingerprint,
         event_date=event_date,
         event_type=ROOT_EVENT_TYPES[root],
-        is_violent=root in VIOLENT_ROOTS,
+        is_violent=violent,
+        conflict_type=conflict_type.classify_gdelt(
+            event_code,
+            actor1_code,
+            actor2_code,
+            countries.from_fips(raw.get("ActionGeo_CountryCode")),
+        )
+        if violent
+        else None,
         latitude=lat,
         longitude=lon,
         geo_precision=GEO_TYPE_PRECISION[geo_type],

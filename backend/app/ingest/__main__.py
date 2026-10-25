@@ -16,6 +16,7 @@ python -m app.ingest load epr data/epr/EPR-2021.csv
 python -m app.ingest load vdem V-Dem-CY-Core-v16.csv
 python -m app.ingest build-features --start 2022-01 --end 2022-12
 python -m app.ingest prune-gdelt-ids --days 30
+python -m app.ingest classify
 """
 
 import argparse
@@ -25,6 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from app.config import get_settings
+from app.conflict_type import reclassify
 from app.db import session_factory
 from app.features import build_cell_months
 from app.ingest import download
@@ -70,6 +72,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     prune.add_argument("--days", type=int, default=30)
 
+    commands.add_parser(
+        "classify", help="sort stored ACLED and GDELT violence into UCDP's kinds again"
+    )
+
     build = commands.add_parser(
         "build-features", help="rebuild cell-month features from the loaded events"
     )
@@ -91,6 +97,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "prune-gdelt-ids":
         with session_factory()() as session:
             logging.info("forgot %d GDELT ids", prune_gdelt_ids(session, args.days))
+        return 0
+
+    if args.command == "classify":
+        with session_factory()() as session:
+            counts = reclassify(session)
+            session.commit()
+        for kind, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            logging.info("%s: %d events", kind or "unclear", n)
         return 0
 
     if args.command == "download":

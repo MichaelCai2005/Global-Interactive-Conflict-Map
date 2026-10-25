@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from datetime import date, datetime
 from typing import TextIO
 
-from app import countries
+from app import conflict_type, countries
 from app.ingest.common import (
     FieldErrors,
     NormalizedEvent,
@@ -129,6 +129,11 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
         event_date=event_date,
         event_type=EVENT_TYPES[event_type],
         is_violent=event_type in VIOLENT_TYPES,
+        conflict_type=conflict_type.classify_acled(
+            EVENT_TYPES[event_type], clean_text(raw.get("inter1")), clean_text(raw.get("inter2"))
+        )
+        if event_type in VIOLENT_TYPES
+        else None,
         latitude=lat,
         longitude=lon,
         geo_precision=GEO_PRECISION.get(precision, "exact"),

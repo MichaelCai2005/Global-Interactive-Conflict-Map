@@ -86,6 +86,7 @@ def parse_row(row_number: int, raw: dict[str, str]) -> ParsedRow:
         end_date=end,
         event_type=VIOLENCE_TYPES.get(violence, "unknown"),
         is_violent=True,
+        conflict_type=VIOLENCE_TYPES.get(violence),
         latitude=lat,
         longitude=lon,
         geo_precision=WHERE_PRECISION.get(where_prec, "exact"),

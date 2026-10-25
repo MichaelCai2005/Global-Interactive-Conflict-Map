@@ -19,8 +19,10 @@ def test_map_returns_points_when_few_enough(client, session, tmp_path):
     ucdp = next(f for f in features if f["properties"]["source"] == "ucdp")
     assert ucdp["geometry"]["type"] == "Point"
     assert set(ucdp["properties"]) == {
-        "id", "date", "day", "type", "violent", "deaths", "source", "precision",
+        "id", "date", "day", "type", "violent", "kind", "deaths", "source", "precision",
     }  # fmt: skip
+    assert ucdp["properties"]["kind"] == "state_based"
+    assert protest["properties"]["kind"] is None
 
 
 def test_map_switches_to_grid_cells_above_the_limit(client, session, tmp_path):
@@ -38,6 +40,12 @@ def test_map_switches_to_grid_cells_above_the_limit(client, session, tmp_path):
         (2, 1, 1),
         (1, 1, 0),
         (1, 1, 0),
+    ]
+    # Each cell also counts its violence by kind; every violent event here is state-based.
+    assert [(c["state_based"], c["non_state"], c["one_sided"]) for c in cells] == [
+        (1, 0, 0),
+        (1, 0, 0),
+        (1, 0, 0),
     ]
 
 

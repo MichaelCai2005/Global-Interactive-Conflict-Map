@@ -14,6 +14,9 @@ class EventOut(BaseModel):
     end_date: date | None
     event_type: str
     is_violent: bool
+    # UCDP's kind of violence: "state_based", "non_state" or "one_sided"; inferred from the
+    # sides for ACLED and GDELT, and empty when unclear or not violent.
+    conflict_type: str | None
     country: str | None
     country_iso3: str | None
     admin1: str | None

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { axisTicks } from "../components/Timeline";
 import { initialState, reducer, toSearch } from "../state/dashboard";
-import { eventCategory } from "./categories";
+import { cellCategory, eventCategory, kindCategory, kindLabel } from "./categories";
 import {
   addDays,
   clampWindow,
@@ -244,6 +244,43 @@ describe("eventCategory", () => {
     expect(eventCategory("protest", false).key).toBe("signal");
     expect(eventCategory("riot", false).key).toBe("signal");
     expect(eventCategory("unknown", true).key).toBe("state");
+  });
+});
+
+describe("kindCategory", () => {
+  it("colors an event by its kind of violence, whatever its source's type", () => {
+    expect(kindCategory("state_based", true).key).toBe("state");
+    expect(kindCategory("non_state", true).key).toBe("non_state");
+    expect(kindCategory("one_sided", true).key).toBe("civilians");
+  });
+
+  it("says when the kind is unclear, and calls non-violent events signals", () => {
+    expect(kindCategory(null, true).key).toBe("unclear");
+    expect(kindCategory(null, false).key).toBe("signal");
+    expect(kindCategory("state_based", false).key).toBe("signal");
+  });
+
+  it("marks a kind read from the sides as likely, but not UCDP's own", () => {
+    expect(kindLabel("one_sided", true, "gdelt")).toBe("Likely violence against civilians");
+    expect(kindLabel("one_sided", true, "ucdp")).toBe("Violence against civilians");
+    expect(kindLabel(null, true, "gdelt")).toBe("Violence, kind unclear");
+  });
+});
+
+describe("cellCategory", () => {
+  const cell = { events: 8, violent: 6, signals: 2, state_based: 1, non_state: 3, one_sided: 1, deaths: 0 };
+
+  it("takes the category most of the area's events fall in", () => {
+    expect(cellCategory(cell).key).toBe("non_state");
+    // Two violent events with no kind outnumber one of each.
+    expect(cellCategory({ ...cell, violent: 5, state_based: 1, non_state: 1, one_sided: 1 }).key).toBe("unclear");
+    // Mostly protests and threats, with some violence, reads as signals, as it would up close.
+    expect(cellCategory({ ...cell, signals: 4 }).key).toBe("signal");
+  });
+
+  it("gives ties to the category listed first", () => {
+    expect(cellCategory({ ...cell, violent: 2, state_based: 1, non_state: 1, one_sided: 0, signals: 1 }).key).toBe("state");
+    expect(cellCategory({ ...cell, violent: 3, state_based: 0, non_state: 0, one_sided: 0, signals: 3 }).key).toBe("unclear");
   });
 });
 

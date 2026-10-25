@@ -14,7 +14,17 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Bbox, CellProps, MapLayer, PointProps } from "../api/types";
 import { type DateWindow, formatDate, toDay } from "../lib/dates";
-import { CATEGORIES, CATEGORY_TYPES, type ColorBy, DEATH_STOPS, NO_DEATHS_COLOR, eventCategory } from "../lib/categories";
+import {
+  CATEGORIES,
+  type CategoryKey,
+  type ColorBy,
+  type ConflictType,
+  DEATH_STOPS,
+  KIND_CATEGORY,
+  NO_DEATHS_COLOR,
+  cellCategory,
+  kindLabel,
+} from "../lib/categories";
 import { eventTypeLabel, formatCount, plural, sourceLabel } from "../lib/format";
 import { viewBbox } from "../lib/geo";
 import { BOARD_STYLE_COLORS, KIND_LABELS } from "../board/style";
@@ -178,7 +188,7 @@ export function MapView({
           source: "events",
           layout: { visibility: "none" },
           paint: {
-            "circle-color": shareColor(),
+            "circle-color": CELL_COLOR,
             "circle-opacity": 0.7,
             "circle-stroke-color": COLORS.surface,
             "circle-stroke-width": 1,
@@ -347,7 +357,7 @@ export function MapView({
     const color = colorBy === "deaths" ? deathColor(["get", "deaths"]) : CATEGORY_COLOR;
     map.setPaintProperty("points", "circle-color", color);
     map.setPaintProperty("points-country", "circle-stroke-color", color);
-    map.setPaintProperty("cells", "circle-color", colorBy === "deaths" ? deathColor(["get", "deaths"]) : shareColor());
+    map.setPaintProperty("cells", "circle-color", colorBy === "deaths" ? deathColor(["get", "deaths"]) : CELL_COLOR);
     // Bright, deadly events draw on top of the dim ones around them.
     const sort: ExpressionSpecification | undefined = colorBy === "deaths" ? ["get", "deaths"] : undefined;
     map.setLayoutProperty("points", "circle-sort-key", sort);
@@ -542,18 +552,42 @@ function addBoardLayers(map: MapLibreMap, beforeLabel: string | undefined) {
   });
 }
 
-/** Events by category (lib/categories.ts); non-violent events are signals whatever their type. */
+const categoryColor = (key: CategoryKey) => CATEGORIES.find((c) => c.key === key)!.color;
+const KINDS = Object.keys(KIND_CATEGORY) as ConflictType[];
+
+/** Events by category (lib/categories.ts), from their kind of violence; non-violent events
+ *  are signals whatever their type. */
 const CATEGORY_COLOR = [
   "case",
   ["!", ["get", "violent"]],
   NO_DEATHS_COLOR,
   [
     "match",
-    ["get", "type"],
-    ...Object.entries(CATEGORY_TYPES).flatMap(([key, types]) => [types, CATEGORIES.find((c) => c.key === key)!.color]),
-    eventCategory("", true).color,
+    ["coalesce", ["get", "kind"], ""],
+    ...KINDS.flatMap((kind) => [kind, categoryColor(KIND_CATEGORY[kind])]),
+    categoryColor("unclear"),
   ],
 ] as unknown as ExpressionSpecification;
+
+/** Each grid cell's events by category, as map expressions; see cellCategory. */
+const CELL_COUNTS: [CategoryKey, ExpressionSpecification][] = [
+  ...KINDS.map((kind): [CategoryKey, ExpressionSpecification] => [KIND_CATEGORY[kind], ["get", kind]]),
+  ["unclear", ["-", ["get", "violent"], ["+", ...KINDS.map((kind) => ["get", kind])]] as unknown as ExpressionSpecification],
+  ["signal", ["get", "signals"]],
+];
+
+/** Grid cells take the color of the category most of their events fall in, so a cell
+ *  looks like its events would up close. Ties go to the category listed first, as in
+ *  cellCategory, which says the same in words for the tooltip. */
+const CELL_COLOR = [
+  "case",
+  ...CELL_COUNTS.slice(0, -1).flatMap(([key, count], i) => [
+    ["all", ...CELL_COUNTS.slice(i + 1).map(([, other]) => [">=", count, other])],
+    categoryColor(key),
+  ]),
+  categoryColor("signal"),
+] as unknown as ExpressionSpecification;
+
 
 /** Deaths on a log scale, grey when none are recorded. */
 function deathColor(deaths: ExpressionSpecification): ExpressionSpecification {
@@ -563,18 +597,6 @@ function deathColor(deaths: ExpressionSpecification): ExpressionSpecification {
     NO_DEATHS_COLOR,
     ["interpolate", ["linear"], ["log10", deaths], ...DEATH_STOPS.flatMap(([n, color]) => [Math.log10(n), color])],
   ] as ExpressionSpecification;
-}
-
-/** Grid cells run from blue (all signals) through grey (mixed) to orange (all violence). */
-function shareColor(): ExpressionSpecification {
-  return [
-    "interpolate",
-    ["linear"],
-    ["/", ["get", "violent"], ["max", 1, ["get", "events"]]],
-    0, COLORS.signal,
-    0.5, COLORS.neutral,
-    1, COLORS.violence,
-  ];
 }
 
 function tooltip(feature: MapGeoJSONFeature): HTMLElement {
@@ -604,13 +626,14 @@ function tooltip(feature: MapGeoJSONFeature): HTMLElement {
     const p = feature.properties as CellProps;
     line(plural(p.events, "event"), "map-tooltip-title");
     line(`${formatCount(p.violent)} violent · ${formatCount(p.signals)} signals`);
+    line(`Mostly ${cellCategory(p).label.toLowerCase()}`);
     if (p.deaths) line(plural(p.deaths, "death"));
     line("Click to zoom in", "map-tooltip-hint");
   } else {
     const p = feature.properties as PointProps;
     line(eventTypeLabel(p.type), "map-tooltip-title");
-    const category = eventCategory(p.type, p.violent).label;
-    if (category !== eventTypeLabel(p.type)) line(category);
+    const label = kindLabel(p.kind, p.violent, p.source);
+    if (label !== eventTypeLabel(p.type)) line(label);
     line(`${formatDate(p.date)} · ${sourceLabel(p.source)}`);
     if (p.deaths) line(plural(p.deaths, "death"));
     if (p.precision === "country") line("Location known only to country level", "map-tooltip-hint");

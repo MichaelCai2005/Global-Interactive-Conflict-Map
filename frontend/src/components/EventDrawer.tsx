@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useEvent, useTaskMutations, useTasks } from "../api/hooks";
 import type { EventDetail, EventOut } from "../api/types";
-import { eventCategory } from "../lib/categories";
+import { INFERRED_KIND_NOTE, kindCategory, kindLabel } from "../lib/categories";
 import { formatDate } from "../lib/dates";
 import { eventTypeLabel, formatCount, plural, sourceLabel } from "../lib/format";
 import { describeTimeAgo, headlineFromUrl } from "../lib/now";
@@ -38,7 +38,11 @@ function Detail({
   onSelect,
   onShowTasks,
 }: { event: EventDetail } & Pick<Props, "onSelect" | "onShowTasks">) {
-  const place = [event.location_name, event.admin1, event.country].filter(Boolean);
+  // GDELT's admin1 is a code ("SU52"), and its place name already ends in region and country.
+  const location = event.location_name ?? "";
+  const region = event.source !== "gdelt" && event.admin1 && !location.includes(event.admin1) ? event.admin1 : null;
+  const country = event.country && !location.endsWith(event.country) ? event.country : null;
+  const place = [event.location_name, region, country].filter(Boolean);
   const deaths =
     event.fatalities_best === null
       ? null
@@ -52,13 +56,14 @@ function Detail({
     ([, v]) => v !== null && v !== "" && typeof v !== "object",
   );
 
-  const category = eventCategory(event.event_type, event.is_violent);
+  const category = kindCategory(event.conflict_type, event.is_violent);
+  const label = kindLabel(event.conflict_type, event.is_violent, event.source);
 
   return (
     <>
-      <div className={`drawer-kind kind-${event.is_violent ? "violent" : "signals"}`} title={category.description}>
+      <div className={`drawer-kind kind-${event.is_violent ? "violent" : "signals"}`} title={label === category.label ? category.description : `${category.description}. ${INFERRED_KIND_NOTE}`}>
         <span className="dot" style={{ background: category.color }} aria-hidden />
-        {category.label}
+        {label}
       </div>
       <h2>{eventTypeLabel(event.event_type)}</h2>
       <p className="drawer-sub">

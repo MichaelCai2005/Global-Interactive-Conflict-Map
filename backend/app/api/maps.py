@@ -7,6 +7,7 @@ from sqlalchemy import Float, case, func, select
 from sqlalchemy.orm import Session
 
 from app.api.events import EventFilters
+from app.conflict_type import CONFLICT_TYPES
 from app.db import get_db
 from app.models import Event
 from app.schemas import (
@@ -46,6 +47,7 @@ def map_layer(params: Annotated[MapQuery, Query()], db: Db):
                     Event.event_date,
                     Event.event_type,
                     Event.is_violent,
+                    Event.conflict_type,
                     Event.fatalities_best,
                     Event.source,
                     Event.geo_precision,
@@ -62,6 +64,7 @@ def map_layer(params: Annotated[MapQuery, Query()], db: Db):
                 day=r.event_date.toordinal() - EPOCH,
                 type=r.event_type,
                 violent=r.is_violent,
+                kind=r.conflict_type,
                 deaths=r.fatalities_best or 0,
                 source=r.source,
                 precision=r.geo_precision,
@@ -81,6 +84,10 @@ def map_layer(params: Annotated[MapQuery, Query()], db: Db):
                 func.avg(Event.latitude).label("lat"),
                 func.count().label("events"),
                 func.count().filter(Event.is_violent).label("violent"),
+                *(
+                    func.count().filter(Event.conflict_type == kind).label(kind)
+                    for kind in CONFLICT_TYPES
+                ),
                 func.coalesce(
                     func.sum(case((Event.is_violent, Event.fatalities_best), else_=0)), 0
                 ).label("deaths"),
@@ -94,6 +101,8 @@ def map_layer(params: Annotated[MapQuery, Query()], db: Db):
             events=c.events,
             violent=c.violent,
             signals=c.events - c.violent,
+            # Violent events by UCDP's kind; the rest of `violent` is unclear.
+            **{kind: c._mapping[kind] for kind in CONFLICT_TYPES},
             deaths=c.deaths,
         )
         for c in cells
